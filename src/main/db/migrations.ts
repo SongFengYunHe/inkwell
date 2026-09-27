@@ -72,5 +72,22 @@ export const migrations: Migration[] = [
 
       `CREATE INDEX chapter_draft_project_idx ON chapter_draft (project_id)`
     ]
+  },
+  {
+    version: 2,
+    name: 'add_provider',
+    statements: [
+      `CREATE TABLE provider (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind TEXT NOT NULL DEFAULT 'openai-compatible',
+        name TEXT NOT NULL,
+        base_url TEXT NOT NULL,
+        api_key_enc TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`
+    ]
   }
 ]

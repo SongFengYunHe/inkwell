@@ -102,6 +102,55 @@ export type DraftSaveInput = Partial<Omit<ChapterDraft, 'id' | 'createdAt' | 'up
   chapterNo: number
 }
 
+/** 模型接入配置（对应计划书 §5.1 `provider` 表，M1 仅支持 openai-compatible） */
+export interface Provider {
+  id: number
+  /** openai-compatible（M1 唯一支持的类型） */
+  kind: string
+  name: string
+  baseUrl: string
+  model: string
+  enabled: boolean
+  /** 是否已保存密钥（密钥本身永不出主进程） */
+  hasApiKey: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+/** 保存接入配置入参；`apiKey` 留空表示保持原密钥不变 */
+export interface ProviderSaveInput {
+  id?: number
+  kind?: string
+  name: string
+  baseUrl: string
+  model: string
+  apiKey?: string
+  enabled?: boolean
+}
+
+/** 连接测试结果 */
+export interface ProviderTestResult {
+  ok: boolean
+  message: string
+  latencyMs: number
+}
+
+/** 单章生成模式 */
+export type GenerationMode = 'draft' | 'continue' | 'rewrite' | 'polish'
+
+export interface GenerateStartInput {
+  requestId: string
+  projectId: number
+  chapterNo: number
+  mode: GenerationMode
+}
+
+/** 生成过程中的流式事件（主进程 → 渲染进程推送） */
+export type GenerateEvent =
+  | { requestId: string; type: 'delta'; text: string }
+  | { requestId: string; type: 'done'; draft: ChapterDraft }
+  | { requestId: string; type: 'error'; message: string }
+
 /** 预加载脚本向渲染进程暴露的 API 契约 */
 export interface InkwellApi {
   project: {
@@ -120,6 +169,19 @@ export interface InkwellApi {
     list(projectId: number): Promise<ChapterDraft[]>
     save(input: DraftSaveInput): Promise<ChapterDraft>
     remove(id: number): Promise<void>
+  }
+  provider: {
+    list(): Promise<Provider[]>
+    save(input: ProviderSaveInput): Promise<Provider>
+    remove(id: number): Promise<void>
+    /** 用当前表单值直接测试连通性（不落库） */
+    test(input: ProviderSaveInput): Promise<ProviderTestResult>
+  }
+  generate: {
+    start(input: GenerateStartInput): Promise<void>
+    abort(requestId: string): Promise<void>
+    /** 订阅流式事件，返回取消订阅函数 */
+    onEvent(listener: (event: GenerateEvent) => void): () => void
   }
   app: {
     /** 数据库文件绝对路径，用于排查与备份 */

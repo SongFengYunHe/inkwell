@@ -13,6 +13,14 @@ export const IpcChannel = {
   draftList: 'draft:list',
   draftSave: 'draft:save',
   draftRemove: 'draft:remove',
+  providerList: 'provider:list',
+  providerSave: 'provider:save',
+  providerRemove: 'provider:remove',
+  providerTest: 'provider:test',
+  generateStart: 'generate:start',
+  generateAbort: 'generate:abort',
+  /** 主进程 → 渲染进程的流式推送通道 */
+  generateEvent: 'generate:event',
   appDbPath: 'app:db-path'
 } as const
 
@@ -69,6 +77,30 @@ export const draftSaveSchema = z.object({
   chapterNo: z.number().int().min(1).max(99_999),
   version: z.number().int().min(1).max(9_999).optional(),
   status: z.enum(['draft', 'revised', 'finalized', 'archived']).optional(),
-  source: z.enum(['write', 'rewrite']).optional(),
+  source: z.enum(['write', 'continue', 'rewrite', 'polish']).optional(),
   content: z.string().max(2_000_000).optional()
+})
+
+export const providerSaveSchema = z.object({
+  id: idSchema.optional(),
+  kind: z.string().max(40).optional(),
+  name: z.string().trim().min(1, '名称不能为空').max(80),
+  baseUrl: z
+    .string()
+    .trim()
+    .min(1, '接口地址不能为空')
+    .max(500)
+    .regex(/^https?:\/\//i, '需以 http:// 或 https:// 开头'),
+  model: z.string().trim().min(1, '模型名不能为空').max(200),
+  apiKey: z.string().max(500).optional(),
+  enabled: z.boolean().optional()
+})
+
+export const requestIdSchema = z.string().min(1).max(100)
+
+export const generateStartSchema = z.object({
+  requestId: requestIdSchema,
+  projectId: projectIdSchema,
+  chapterNo: z.number().int().min(1).max(99_999),
+  mode: z.enum(['draft', 'continue', 'rewrite', 'polish'])
 })

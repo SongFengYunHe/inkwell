@@ -2,8 +2,6 @@
 
 本地优先的 AI 长篇小说生产工作台。核心主张：**只给「大纲 + 每章细纲」，即可自动写完整本书。**
 
-> 完整产品规划见本地 `docs/` 目录下的项目计划书（该目录已在 `.gitignore` 中，不随仓库分发）。
-
 ## 当前进度
 
 **M0 · 脚手架与地基 —— 已完成**
@@ -12,8 +10,6 @@
 - SQLite（better-sqlite3）+ Drizzle ORM；`schema_version` 驱动的迁移
 - `project` / `chapter_brief` / `chapter_draft` 三表 CRUD
 - 可新建项目、手写总大纲与章节细纲，**重启后数据仍在**（见下方冒烟自检）
-
-后续里程碑见计划书 §10。
 
 ## 技术栈
 
@@ -64,7 +60,6 @@ src/
 ├─ renderer/             # React 界面（书架 / 工作区）
 └─ shared/               # 跨进程共享的类型与 IPC 契约
 scripts/                 # Git 每轮提交与安全回滚脚本
-docs/                    # 项目计划书（本地保留，已在 .gitignore 中）
 ```
 
 ## Git 工作流：每轮自动提交 + 安全回滚
@@ -87,4 +82,4 @@ git tag -l "snapshot/*" --sort=-creatordate
 
 ## 许可
 
-待定（计划书 §11 建议 MIT 或 Apache-2.0）。
+待定

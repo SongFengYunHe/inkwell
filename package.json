@@ -11,7 +11,8 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "smoke": "electron-vite build && electron . --smoke"
+    "smoke": "electron-vite build && electron . --smoke",
+    "smoke:llm": "electron-vite build && electron . --smoke-llm"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

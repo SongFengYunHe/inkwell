@@ -76,6 +76,20 @@ export const chapterDraft = sqliteTable(
   ]
 )
 
+/** 模型接入配置（M1 仅 openai-compatible） */
+export const provider = sqliteTable('provider', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  kind: text('kind').notNull().default('openai-compatible'),
+  name: text('name').notNull(),
+  baseUrl: text('base_url').notNull(),
+  /** 经 safeStorage 加密后的密钥密文，永不明文落库 */
+  apiKeyEnc: text('api_key_enc').notNull().default(''),
+  model: text('model').notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull()
+})
+
 /** 迁移版本表（schema_version 驱动迁移） */
 export const schemaVersion = sqliteTable('schema_version', {
   version: integer('version').primaryKey(),
