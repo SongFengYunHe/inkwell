@@ -116,8 +116,11 @@ export default function Bookshelf() {
             disabled={!name.trim() || loading}
             className="mt-1 rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            创建并进入
+            {premise.trim() ? '创建并由 AI 生成大纲' : '创建并进入'}
           </button>
+          {premise.trim() && (
+            <p className="text-center text-[11px] text-stone-400">将自动生成设定、总大纲与各章细纲</p>
+          )}
         </form>
 
         <section className="overflow-y-auto pr-1">

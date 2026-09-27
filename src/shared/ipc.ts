@@ -10,6 +10,7 @@ export const IpcChannel = {
   briefList: 'brief:list',
   briefSave: 'brief:save',
   briefRemove: 'brief:remove',
+  briefExpand: 'brief:expand',
   draftList: 'draft:list',
   draftSave: 'draft:save',
   draftRemove: 'draft:remove',
@@ -21,6 +22,10 @@ export const IpcChannel = {
   generateAbort: 'generate:abort',
   /** 主进程 → 渲染进程的流式推送通道 */
   generateEvent: 'generate:event',
+  wizardStart: 'wizard:start',
+  wizardAbort: 'wizard:abort',
+  /** 主进程 → 渲染进程的向导进度推送通道 */
+  wizardEvent: 'wizard:event',
   appDbPath: 'app:db-path'
 } as const
 
@@ -103,4 +108,22 @@ export const generateStartSchema = z.object({
   projectId: projectIdSchema,
   chapterNo: z.number().int().min(1).max(99_999),
   mode: z.enum(['draft', 'continue', 'rewrite', 'polish'])
+})
+
+export const wizardStartSchema = z.object({
+  requestId: requestIdSchema,
+  projectId: projectIdSchema
+})
+
+export const briefExpandSchema = z.object({
+  projectId: projectIdSchema,
+  chapterNo: z.number().int().min(1).max(99_999),
+  current: z.object({
+    title: z.string().max(200),
+    purpose: z.string().max(4_000),
+    keyEvents: z.string().max(20_000),
+    characters: z.array(z.string().max(80)).max(200),
+    sceneBeats: z.array(z.string().max(2_000)).max(200),
+    suspenseHook: z.string().max(2_000)
+  })
 })

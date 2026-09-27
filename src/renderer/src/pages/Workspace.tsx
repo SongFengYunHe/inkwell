@@ -3,6 +3,7 @@ import BriefPanel from '../components/BriefPanel'
 import ChapterNav from '../components/ChapterNav'
 import DraftPanel from '../components/DraftPanel'
 import OutlinePanel from '../components/OutlinePanel'
+import WizardBanner from '../components/WizardBanner'
 import { useAppStore } from '../stores/appStore'
 
 type Tab = 'brief' | 'outline' | 'draft'
@@ -59,6 +60,8 @@ export default function Workspace() {
           </button>
         </div>
       </header>
+
+      <WizardBanner />
 
       <div className="flex min-h-0 flex-1">
         <ChapterNav />

@@ -1,5 +1,6 @@
 import {
   IpcChannel,
+  briefExpandSchema,
   briefSaveSchema,
   draftSaveSchema,
   generateStartSchema,
@@ -8,21 +9,30 @@ import {
   projectIdSchema,
   projectUpdateSchema,
   providerSaveSchema,
-  requestIdSchema
+  requestIdSchema,
+  wizardStartSchema
 } from '@shared/ipc'
-import type { GenerateEvent } from '@shared/types'
+import type { GenerateEvent, WizardEvent } from '@shared/types'
 import { ipcMain, type WebContents } from 'electron'
 import { getDatabasePath } from '../db/client'
 import * as repo from '../db/repositories'
+import { expandBrief } from '../llm/brief'
 import { runGeneration } from '../llm/generate'
+import { runWizard } from '../llm/wizard'
 import { createOpenAiCompatibleProvider } from '../providers/openai-compatible'
 import { deleteProvider, getProviderSecret, listProviders, saveProvider } from '../providers/store'
 
-/** 正在进行的生成请求，key 为渲染进程生成的 requestId */
-const activeGenerations = new Map<string, AbortController>()
+/** 正在进行的可中断任务，key 为渲染进程生成的 requestId */
+const activeJobs = new Map<string, AbortController>()
 
-function emit(sender: WebContents, event: GenerateEvent): void {
-  if (!sender.isDestroyed()) sender.send(IpcChannel.generateEvent, event)
+/** 长任务的失败信息统一格式化 */
+function jobErrorMessage(error: unknown, aborted: boolean): string {
+  if (aborted) return '已停止'
+  return error instanceof Error ? error.message : String(error)
+}
+
+function emit<T>(sender: WebContents, channel: string, payload: T): void {
+  if (!sender.isDestroyed()) sender.send(channel, payload)
 }
 
 /** 注册全部 IPC 处理器；入参一律经 zod 校验后再进入业务层 */
@@ -48,6 +58,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.briefRemove, (_event, id: unknown) => {
     repo.deleteBrief(idSchema.parse(id))
   })
+  ipcMain.handle(IpcChannel.briefExpand, (_event, raw: unknown) => expandBrief(briefExpandSchema.parse(raw)))
 
   /* --------------------------------- 正文 --------------------------------- */
   ipcMain.handle(IpcChannel.draftList, (_event, projectId: unknown) =>
@@ -79,10 +90,10 @@ export function registerIpcHandlers(): void {
   /* -------------------------------- 单章生成 ------------------------------- */
   ipcMain.handle(IpcChannel.generateStart, (event, raw: unknown) => {
     const input = generateStartSchema.parse(raw)
-    if (activeGenerations.has(input.requestId)) throw new Error('重复的生成请求标识')
+    if (activeJobs.has(input.requestId)) throw new Error('重复的生成请求标识')
 
     const controller = new AbortController()
-    activeGenerations.set(input.requestId, controller)
+    activeJobs.set(input.requestId, controller)
     const sender = event.sender
 
     void (async () => {
@@ -90,24 +101,61 @@ export function registerIpcHandlers(): void {
         const draft = await runGeneration({
           input,
           signal: controller.signal,
-          onDelta: (text) => emit(sender, { requestId: input.requestId, type: 'delta', text })
+          onDelta: (text) => emit<GenerateEvent>(sender, IpcChannel.generateEvent, { requestId: input.requestId, type: 'delta', text })
         })
-        emit(sender, { requestId: input.requestId, type: 'done', draft })
+        emit<GenerateEvent>(sender, IpcChannel.generateEvent, { requestId: input.requestId, type: 'done', draft })
       } catch (error) {
-        const message = controller.signal.aborted
-          ? '已停止生成'
-          : error instanceof Error
-            ? error.message
-            : String(error)
-        emit(sender, { requestId: input.requestId, type: 'error', message })
+        emit<GenerateEvent>(sender, IpcChannel.generateEvent, {
+          requestId: input.requestId,
+          type: 'error',
+          message: jobErrorMessage(error, controller.signal.aborted)
+        })
       } finally {
-        activeGenerations.delete(input.requestId)
+        activeJobs.delete(input.requestId)
       }
     })()
   })
 
   ipcMain.handle(IpcChannel.generateAbort, (_event, requestId: unknown) => {
-    activeGenerations.get(requestIdSchema.parse(requestId))?.abort()
+    activeJobs.get(requestIdSchema.parse(requestId))?.abort()
+  })
+
+  /* -------------------------------- 新建向导 ------------------------------- */
+  ipcMain.handle(IpcChannel.wizardStart, (event, raw: unknown) => {
+    const input = wizardStartSchema.parse(raw)
+    if (activeJobs.has(input.requestId)) throw new Error('重复的向导请求标识')
+
+    const controller = new AbortController()
+    activeJobs.set(input.requestId, controller)
+    const sender = event.sender
+
+    void (async () => {
+      try {
+        const result = await runWizard({
+          projectId: input.projectId,
+          signal: controller.signal,
+          onProgress: (progress) =>
+            emit<WizardEvent>(sender, IpcChannel.wizardEvent, { requestId: input.requestId, type: 'progress', progress })
+        })
+        emit<WizardEvent>(sender, IpcChannel.wizardEvent, {
+          requestId: input.requestId,
+          type: 'done',
+          briefsCreated: result.briefsCreated
+        })
+      } catch (error) {
+        emit<WizardEvent>(sender, IpcChannel.wizardEvent, {
+          requestId: input.requestId,
+          type: 'error',
+          message: jobErrorMessage(error, controller.signal.aborted)
+        })
+      } finally {
+        activeJobs.delete(input.requestId)
+      }
+    })()
+  })
+
+  ipcMain.handle(IpcChannel.wizardAbort, (_event, requestId: unknown) => {
+    activeJobs.get(requestIdSchema.parse(requestId))?.abort()
   })
 
   ipcMain.handle(IpcChannel.appDbPath, () => getDatabasePath())

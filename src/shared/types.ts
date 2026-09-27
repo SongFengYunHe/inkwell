@@ -151,6 +151,49 @@ export type GenerateEvent =
   | { requestId: string; type: 'done'; draft: ChapterDraft }
   | { requestId: string; type: 'error'; message: string }
 
+/** 新建向导进度（一句话灵感 → 设定/大纲 → 逐章细纲） */
+export interface WizardProgress {
+  phase: 'outline' | 'briefs' | 'done'
+  message: string
+  completed: number
+  total: number
+}
+
+export interface WizardStartInput {
+  requestId: string
+  projectId: number
+}
+
+export type WizardEvent =
+  | { requestId: string; type: 'progress'; progress: WizardProgress }
+  | { requestId: string; type: 'done'; briefsCreated: number }
+  | { requestId: string; type: 'error'; message: string }
+
+/** 细纲 AI 补全的输入 */
+export interface BriefExpandInput {
+  projectId: number
+  chapterNo: number
+  current: {
+    title: string
+    purpose: string
+    keyEvents: string
+    characters: string[]
+    sceneBeats: string[]
+    suspenseHook: string
+  }
+}
+
+/** 细纲 AI 补全的建议结果（需用户确认后才落库） */
+export interface BriefSuggestion {
+  chapterNo: number
+  title: string
+  purpose: string
+  keyEvents: string
+  characters: string[]
+  sceneBeats: string[]
+  suspenseHook: string
+}
+
 /** 预加载脚本向渲染进程暴露的 API 契约 */
 export interface InkwellApi {
   project: {
@@ -164,6 +207,8 @@ export interface InkwellApi {
     list(projectId: number): Promise<ChapterBrief[]>
     save(input: BriefSaveInput): Promise<ChapterBrief>
     remove(id: number): Promise<void>
+    /** AI 补全单章细纲，仅返回建议，不落库 */
+    expand(input: BriefExpandInput): Promise<BriefSuggestion>
   }
   draft: {
     list(projectId: number): Promise<ChapterDraft[]>
@@ -182,6 +227,11 @@ export interface InkwellApi {
     abort(requestId: string): Promise<void>
     /** 订阅流式事件，返回取消订阅函数 */
     onEvent(listener: (event: GenerateEvent) => void): () => void
+  }
+  wizard: {
+    start(input: WizardStartInput): Promise<void>
+    abort(requestId: string): Promise<void>
+    onEvent(listener: (event: WizardEvent) => void): () => void
   }
   app: {
     /** 数据库文件绝对路径，用于排查与备份 */

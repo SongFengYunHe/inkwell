@@ -59,10 +59,12 @@ export default function BriefPanel() {
   const loading = useAppStore((s) => s.loading)
   const saveBrief = useAppStore((s) => s.saveBrief)
   const removeBrief = useAppStore((s) => s.removeBrief)
+  const expandBrief = useAppStore((s) => s.expandBrief)
   const setCurrentChapter = useAppStore((s) => s.setCurrentChapter)
 
   const brief = briefs.find((item) => item.chapterNo === currentChapterNo) ?? null
   const [form, setForm] = useState<BriefForm>(() => emptyForm(currentChapterNo))
+  const [expanding, setExpanding] = useState(false)
 
   useEffect(() => {
     setForm(brief ? toForm(brief) : emptyForm(currentChapterNo))
@@ -91,6 +93,44 @@ export default function BriefPanel() {
       notes: form.notes
     })
     setCurrentChapter(form.chapterNo)
+  }
+
+  const parseBeats = (value: string): string[] =>
+    value
+      .split('\n')
+      .map((beat) => beat.trim())
+      .filter(Boolean)
+
+  /** AI 补全：把建议填回表单，由用户确认后再保存 */
+  const handleExpand = async (): Promise<void> => {
+    if (activeProjectId === null) return
+    setExpanding(true)
+    try {
+      const suggestion = await expandBrief({
+        projectId: activeProjectId,
+        chapterNo: form.chapterNo,
+        current: {
+          title: form.title,
+          purpose: form.purpose,
+          keyEvents: form.keyEvents,
+          characters: splitList(form.characters),
+          sceneBeats: parseBeats(form.sceneBeats),
+          suspenseHook: form.suspenseHook
+        }
+      })
+      if (!suggestion) return
+      setForm((prev) => ({
+        ...prev,
+        title: suggestion.title || prev.title,
+        purpose: suggestion.purpose || prev.purpose,
+        keyEvents: suggestion.keyEvents || prev.keyEvents,
+        characters: suggestion.characters.length ? suggestion.characters.join('、') : prev.characters,
+        sceneBeats: suggestion.sceneBeats.length ? suggestion.sceneBeats.join('\n') : prev.sceneBeats,
+        suspenseHook: suggestion.suspenseHook || prev.suspenseHook
+      }))
+    } finally {
+      setExpanding(false)
+    }
   }
 
   return (
@@ -198,6 +238,14 @@ export default function BriefPanel() {
         <div className="flex items-center gap-3 md:col-span-2">
           <button type="submit" disabled={loading} className={BUTTON_PRIMARY}>
             {brief ? '更新细纲' : '保存细纲'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleExpand()}
+            disabled={expanding || loading}
+            className={BUTTON_GHOST}
+          >
+            {expanding ? 'AI 补全中…' : 'AI 补全本章细纲'}
           </button>
           {brief && (
             <>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useAppStore } from '../stores/appStore'
-import { BUTTON_PRIMARY, INPUT_CLASS, Labeled } from './ui'
+import { BUTTON_GHOST, BUTTON_PRIMARY, INPUT_CLASS, Labeled } from './ui'
 
 interface OutlineForm {
   premise: string
@@ -18,6 +18,8 @@ export default function OutlinePanel() {
   const activeProjectId = useAppStore((s) => s.activeProjectId)
   const loading = useAppStore((s) => s.loading)
   const updateProject = useAppStore((s) => s.updateProject)
+  const startWizard = useAppStore((s) => s.startWizard)
+  const wizard = useAppStore((s) => s.wizard)
 
   const project = useMemo(
     () => projects.find((item) => item.id === activeProjectId) ?? null,
@@ -54,6 +56,16 @@ export default function OutlinePanel() {
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
     await updateProject({ id: project.id, ...form })
+  }
+
+  const handleWizard = async (): Promise<void> => {
+    if (
+      form.coreOutline.trim() &&
+      !window.confirm('AI 生成会覆盖世界观 / 主角 / 金手指 / 文风 / 总大纲（不会动已有细纲）。继续？')
+    ) {
+      return
+    }
+    await startWizard()
   }
 
   return (
@@ -129,10 +141,19 @@ export default function OutlinePanel() {
           />
         </Labeled>
       </div>
-      <div className="md:col-span-2">
+      <div className="flex flex-wrap items-center gap-3 md:col-span-2">
         <button type="submit" disabled={loading} className={BUTTON_PRIMARY}>
           保存设定与大纲
         </button>
+        <button
+          type="button"
+          onClick={() => void handleWizard()}
+          disabled={loading || wizard !== null}
+          className={BUTTON_GHOST}
+        >
+          {wizard ? 'AI 生成中…' : 'AI 生成设定与大纲'}
+        </button>
+        <span className="text-xs text-stone-400">按总大纲自动补齐所有章节细纲</span>
       </div>
     </form>
   )

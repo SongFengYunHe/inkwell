@@ -1,5 +1,6 @@
 import type {
   BriefSaveInput,
+  BriefSuggestion,
   ChapterBrief,
   ChapterDraft,
   DraftSaveInput,
@@ -10,7 +11,10 @@ import type {
   ProjectUpdateInput,
   Provider,
   ProviderSaveInput,
-  ProviderTestResult
+  ProviderTestResult,
+  WizardEvent,
+  WizardProgress,
+  BriefExpandInput
 } from '@shared/types'
 import { create } from 'zustand'
 
@@ -20,6 +24,11 @@ interface GeneratingState {
   requestId: string
   chapterNo: number
   mode: GenerationMode
+}
+
+interface WizardState {
+  requestId: string
+  progress: WizardProgress | null
 }
 
 interface AppState {
@@ -39,6 +48,9 @@ interface AppState {
   /** 生成收尾提示（如「已停止生成」） */
   notice: string | null
 
+  wizard: WizardState | null
+  wizardNotice: string | null
+
   setView: (view: View) => void
   clearError: () => void
   clearNotice: () => void
@@ -52,6 +64,7 @@ interface AppState {
 
   saveBrief: (input: BriefSaveInput) => Promise<void>
   removeBrief: (id: number) => Promise<void>
+  expandBrief: (input: BriefExpandInput) => Promise<BriefSuggestion | null>
   saveDraft: (input: DraftSaveInput) => Promise<void>
   removeDraft: (id: number) => Promise<void>
 
@@ -67,6 +80,11 @@ interface AppState {
   generate: (mode: GenerationMode) => Promise<void>
   abortGeneration: () => Promise<void>
   handleGenerateEvent: (event: GenerateEvent) => void
+
+  startWizard: (projectId?: number) => Promise<void>
+  abortWizard: () => Promise<void>
+  handleWizardEvent: (event: WizardEvent) => void
+  clearWizardNotice: () => void
 }
 
 /** 统一收敛错误信息，避免每个动作各写一遍 try/catch */
@@ -100,6 +118,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   generating: null,
   streamText: '',
   notice: null,
+  wizard: null,
+  wizardNotice: null,
 
   setView: (view) => set({ view }),
   clearError: () => set({ error: null }),
@@ -115,6 +135,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!created) return
     set({ projects: [created, ...get().projects] })
     await get().openProject(created.id)
+    // 填了灵感就立刻让 AI 出设定、大纲与细纲（计划书 §8.1）
+    if (created.premise.trim()) await get().startWizard(created.id)
   },
 
   removeProject: async (id) => {
@@ -124,7 +146,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   openProject: async (id) => {
-    set({ view: 'workspace', activeProjectId: id, currentChapterNo: 1, streamText: '', notice: null })
+    set({ view: 'workspace', activeProjectId: id, currentChapterNo: 1, streamText: '', notice: null, wizardNotice: null })
     await Promise.all([get().reloadBriefs(), get().reloadDrafts()])
   },
 
@@ -145,6 +167,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   removeBrief: async (id) => {
     await guard(set, () => window.inkwell.brief.remove(id))
     await get().reloadBriefs()
+  },
+
+  expandBrief: async (input) => {
+    const suggestion = await guard(set, () => window.inkwell.brief.expand(input))
+    return suggestion ?? null
   },
 
   saveDraft: async (input) => {
@@ -251,5 +278,50 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     set({ generating: null, streamText: '', notice: event.message })
-  }
+  },
+
+  startWizard: async (projectId) => {
+    const target = projectId ?? get().activeProjectId
+    if (target === null || get().wizard) return
+
+    const requestId = makeRequestId()
+    set({ wizard: { requestId, progress: null }, wizardNotice: null, error: null })
+    try {
+      await window.inkwell.wizard.start({ requestId, projectId: target })
+    } catch (err) {
+      set({ wizard: null, error: err instanceof Error ? err.message : String(err) })
+    }
+  },
+
+  abortWizard: async () => {
+    const wizard = get().wizard
+    if (!wizard) return
+    await window.inkwell.wizard.abort(wizard.requestId)
+  },
+
+  handleWizardEvent: (event) => {
+    const wizard = get().wizard
+    if (!wizard || wizard.requestId !== event.requestId) return
+
+    if (event.type === 'progress') {
+      set({ wizard: { ...wizard, progress: event.progress } })
+      return
+    }
+
+    if (event.type === 'done') {
+      set({ wizard: null, wizardNotice: `已完成：设定与大纲，并补齐 ${event.briefsCreated} 章细纲` })
+      void get().loadProjects()
+      void get().reloadBriefs()
+      void get().reloadDrafts()
+      return
+    }
+
+    if (event.message === '已停止') {
+      set({ wizard: null, wizardNotice: '已停止生成' })
+      return
+    }
+    set({ wizard: null, error: event.message })
+  },
+
+  clearWizardNotice: () => set({ wizardNotice: null })
 }))

@@ -1,5 +1,6 @@
 import { IpcChannel } from '@shared/ipc'
 import type {
+  BriefExpandInput,
   BriefSaveInput,
   DraftSaveInput,
   GenerateEvent,
@@ -7,7 +8,9 @@ import type {
   InkwellApi,
   ProjectCreateInput,
   ProjectUpdateInput,
-  ProviderSaveInput
+  ProviderSaveInput,
+  WizardEvent,
+  WizardStartInput
 } from '@shared/types'
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
@@ -23,7 +26,8 @@ const api: InkwellApi = {
   brief: {
     list: (projectId: number) => ipcRenderer.invoke(IpcChannel.briefList, projectId),
     save: (input: BriefSaveInput) => ipcRenderer.invoke(IpcChannel.briefSave, input),
-    remove: (id: number) => ipcRenderer.invoke(IpcChannel.briefRemove, id)
+    remove: (id: number) => ipcRenderer.invoke(IpcChannel.briefRemove, id),
+    expand: (input: BriefExpandInput) => ipcRenderer.invoke(IpcChannel.briefExpand, input)
   },
   draft: {
     list: (projectId: number) => ipcRenderer.invoke(IpcChannel.draftList, projectId),
@@ -44,6 +48,17 @@ const api: InkwellApi = {
       ipcRenderer.on(IpcChannel.generateEvent, handler)
       return () => {
         ipcRenderer.removeListener(IpcChannel.generateEvent, handler)
+      }
+    }
+  },
+  wizard: {
+    start: (input: WizardStartInput) => ipcRenderer.invoke(IpcChannel.wizardStart, input),
+    abort: (requestId: string) => ipcRenderer.invoke(IpcChannel.wizardAbort, requestId),
+    onEvent: (listener: (event: WizardEvent) => void) => {
+      const handler = (_event: IpcRendererEvent, payload: WizardEvent): void => listener(payload)
+      ipcRenderer.on(IpcChannel.wizardEvent, handler)
+      return () => {
+        ipcRenderer.removeListener(IpcChannel.wizardEvent, handler)
       }
     }
   },
