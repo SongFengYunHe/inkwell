@@ -1,8 +1,8 @@
-import type { ChatMessage } from '../providers/types'
 import { createOpenAiCompatibleProvider } from '../providers/openai-compatible'
-import { getActiveProvider } from '../providers/store'
+import type { ChatMessage } from '../providers/types'
+import { resolveTargets, type ResolvedTarget } from './route'
+import { recordLlmCall } from './usage'
 
-/** 创作角色（计划书 §6.1）；M1.5 仅使用 architect / writer，M2 由 RoleRouter 分派 */
 export type LlmRole = 'architect' | 'writer' | 'reviewer' | 'extractor' | 'embedder'
 
 export interface InvokeInput {
@@ -12,6 +12,152 @@ export interface InvokeInput {
   onDelta?: (delta: string) => void
   temperature?: number
   maxTokens?: number
+}
+
+/** 中文为主的粗略 token 估算，仅在服务端未返回 usage 时兜底 */
+function estimateTokens(text: string): number {
+  const cjk = (text.match(/[\u4e00-\u9fff]/g) ?? []).length
+  const rest = text.length - cjk
+  return Math.max(1, Math.round(cjk + rest / 4))
+}
+
+/** 简单的并发闸门，用于 max_concurrency */
+class Semaphore {
+  private active = 0
+  private readonly waiters: Array<() => void> = []
+
+  constructor(private readonly limit: number) {}
+
+  async acquire(): Promise<() => void> {
+    if (this.active >= this.limit) {
+      await new Promise<void>((resolve) => this.waiters.push(resolve))
+    }
+    this.active += 1
+
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.active -= 1
+      this.waiters.shift()?.()
+    }
+  }
+}
+
+const semaphores = new Map<string, Semaphore>()
+/** providerId → 下一个允许发起请求的时间戳 */
+const rateGates = new Map<number, number>()
+
+function limiterFor(target: ResolvedTarget): Semaphore {
+  const key = `${target.providerId}:${target.maxConcurrency}`
+  let semaphore = semaphores.get(key)
+  if (!semaphore) {
+    semaphore = new Semaphore(target.maxConcurrency)
+    semaphores.set(key, semaphore)
+  }
+  return semaphore
+}
+
+/** 严格限速：主要给自定义反代端点用，降低触发风控的概率 */
+async function waitForRateLimit(providerId: number, perMinute: number): Promise<void> {
+  if (perMinute <= 0) return
+  const interval = Math.ceil(60_000 / perMinute)
+  const now = Date.now()
+  const nextAllowed = rateGates.get(providerId) ?? 0
+  rateGates.set(providerId, Math.max(now, nextAllowed) + interval)
+
+  const wait = nextAllowed - now
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
+}
+
+/**
+ * 按角色路由调用模型：主端点失败时按 fallback 链依次重试；
+ * 全程记入 `llm_call` 用量。
+ */
+export async function invokeChat(input: InvokeInput): Promise<string> {
+  const targets = resolveTargets(input.role)
+  if (targets.length === 0) {
+    throw new Error('尚未配置可用的模型接入：请在「设置 · 官方 API」添加端点，或改用「Agent 模式」由外部 Agent 驱动')
+  }
+
+  const promptText = input.messages.map((message) => message.content).join('\n')
+  let lastError = new Error('没有可用的模型端点')
+
+  for (const target of targets) {
+    const release = await limiterFor(target).acquire()
+    const startedAt = Date.now()
+    let promptTokens = 0
+    let completionTokens = 0
+    let emitted = ''
+
+    try {
+      await waitForRateLimit(target.providerId, target.rateLimitPerMin)
+
+      const provider = createOpenAiCompatibleProvider({
+        id: String(target.providerId),
+        baseUrl: target.baseUrl,
+        apiKey: target.apiKey,
+        model: target.model,
+        headers: target.headers
+      })
+
+      let text = ''
+      for await (const chunk of provider.chat(
+        {
+          model: target.model,
+          messages: input.messages,
+          temperature: input.temperature,
+          maxTokens: input.maxTokens
+        },
+        input.signal
+      )) {
+        if (chunk.delta) {
+          text += chunk.delta
+          emitted += chunk.delta
+          input.onDelta?.(chunk.delta)
+        }
+        if (chunk.usage) {
+          promptTokens = chunk.usage.promptTokens
+          completionTokens = chunk.usage.completionTokens
+        }
+      }
+
+      recordLlmCall({
+        providerId: target.providerId,
+        providerName: target.providerName,
+        model: target.model,
+        role: input.role,
+        promptTokens: promptTokens || estimateTokens(promptText),
+        completionTokens: completionTokens || estimateTokens(text),
+        durationMs: Date.now() - startedAt,
+        success: true,
+        error: '',
+        createdAt: Date.now()
+      })
+      return text
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+      recordLlmCall({
+        providerId: target.providerId,
+        providerName: target.providerName,
+        model: target.model,
+        role: input.role,
+        promptTokens: promptTokens || estimateTokens(promptText),
+        completionTokens: completionTokens || estimateTokens(emitted),
+        durationMs: Date.now() - startedAt,
+        success: false,
+        error: lastError.message,
+        createdAt: Date.now()
+      })
+
+      // 已中断、或已经吐出内容（再换端点会产生重复文本）时不再重试
+      if (input.signal?.aborted || emitted.length > 0) throw lastError
+    } finally {
+      release()
+    }
+  }
+
+  throw lastError
 }
 
 /** 从模型输出里尽力提取 JSON：容忍 ```json 围栏与前后解释文字 */
@@ -38,34 +184,6 @@ export function tryParseJson(raw: string): unknown {
     }
   }
   return undefined
-}
-
-/** 调用模型并返回完整文本 */
-export async function invokeChat(input: InvokeInput): Promise<string> {
-  const active = getActiveProvider()
-  if (!active) throw new Error('尚未配置模型接入，请先到「设置」添加一个 OpenAI 兼容端点')
-
-  const provider = createOpenAiCompatibleProvider({
-    id: String(active.dto.id),
-    baseUrl: active.dto.baseUrl,
-    apiKey: active.apiKey,
-    model: active.dto.model
-  })
-
-  let text = ''
-  for await (const chunk of provider.chat(
-    {
-      model: active.dto.model,
-      messages: input.messages,
-      temperature: input.temperature,
-      maxTokens: input.maxTokens
-    },
-    input.signal
-  )) {
-    text += chunk.delta
-    input.onDelta?.(chunk.delta)
-  }
-  return text
 }
 
 /**

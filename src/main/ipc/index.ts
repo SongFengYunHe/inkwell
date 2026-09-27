@@ -10,6 +10,7 @@ import {
   projectUpdateSchema,
   providerSaveSchema,
   requestIdSchema,
+  roleRouteSaveSchema,
   wizardStartSchema
 } from '@shared/ipc'
 import type { GenerateEvent, WizardEvent } from '@shared/types'
@@ -18,9 +19,17 @@ import { getDatabasePath } from '../db/client'
 import * as repo from '../db/repositories'
 import { expandBrief } from '../llm/brief'
 import { runGeneration } from '../llm/generate'
+import { deleteRoute, listRoutes, saveRoute } from '../llm/route'
+import { getUsageSummary } from '../llm/usage'
 import { runWizard } from '../llm/wizard'
 import { createOpenAiCompatibleProvider } from '../providers/openai-compatible'
-import { deleteProvider, getProviderSecret, listProviders, saveProvider } from '../providers/store'
+import {
+  deleteProvider,
+  getProviderById,
+  getProviderSecret,
+  listProviders,
+  saveProvider
+} from '../providers/store'
 
 /** 正在进行的可中断任务，key 为渲染进程生成的 requestId */
 const activeJobs = new Map<string, AbortController>()
@@ -71,7 +80,15 @@ export function registerIpcHandlers(): void {
 
   /* -------------------------------- 模型接入 ------------------------------- */
   ipcMain.handle(IpcChannel.providerList, () => listProviders())
-  ipcMain.handle(IpcChannel.providerSave, (_event, input: unknown) => saveProvider(providerSaveSchema.parse(input)))
+  ipcMain.handle(IpcChannel.providerSave, (_event, input: unknown) => {
+    const parsed = providerSaveSchema.parse(input)
+    // 反代端点必须先确认风险（计划书 §6.4 / §11）
+    if (parsed.kind === 'custom-reverse-proxy') {
+      const accepted = parsed.riskAccepted ?? (parsed.id ? getProviderById(parsed.id)?.dto.riskAccepted ?? false : false)
+      if (!accepted) throw new Error('自定义反代端点需要先勾选并确认风险提示后才能保存')
+    }
+    return saveProvider(parsed)
+  })
   ipcMain.handle(IpcChannel.providerRemove, (_event, id: unknown) => {
     deleteProvider(idSchema.parse(id))
   })
@@ -82,10 +99,21 @@ export function registerIpcHandlers(): void {
       id: 'connection-test',
       baseUrl: input.baseUrl,
       apiKey,
-      model: input.model
+      model: input.model,
+      headers: input.headers
     })
     return provider.health()
   })
+
+  /* ------------------------------ 角色-模型路由 ----------------------------- */
+  ipcMain.handle(IpcChannel.routeList, () => listRoutes())
+  ipcMain.handle(IpcChannel.routeSave, (_event, input: unknown) => saveRoute(roleRouteSaveSchema.parse(input)))
+  ipcMain.handle(IpcChannel.routeRemove, (_event, role: unknown) => {
+    deleteRoute(roleRouteSaveSchema.shape.role.parse(role))
+  })
+
+  /* --------------------------------- 用量 --------------------------------- */
+  ipcMain.handle(IpcChannel.usageSummary, () => getUsageSummary())
 
   /* -------------------------------- 单章生成 ------------------------------- */
   ipcMain.handle(IpcChannel.generateStart, (event, raw: unknown) => {

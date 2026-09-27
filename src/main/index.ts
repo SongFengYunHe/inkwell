@@ -4,12 +4,14 @@ import { closeDatabase, initDatabase } from './db/client'
 import { registerIpcHandlers } from './ipc'
 import { runSmoke } from './smoke'
 import { runSmokeLlm } from './smoke-llm'
+import { runSmokeMcp } from './smoke-mcp'
 
 const isSmokeRun = process.argv.includes('--smoke')
 const isLlmSmokeRun = process.argv.includes('--smoke-llm')
+const isMcpSmokeRun = process.argv.includes('--smoke-mcp')
 
 // 冒烟自检使用独立目录，避免污染真实用户数据
-if (isSmokeRun || isLlmSmokeRun) {
+if (isSmokeRun || isLlmSmokeRun || isMcpSmokeRun) {
   app.setPath('userData', join(app.getPath('temp'), 'inkwell-smoke'))
 }
 
@@ -59,6 +61,11 @@ app.whenReady().then(() => {
 
   if (isLlmSmokeRun) {
     void runSmokeLlm()
+    return
+  }
+
+  if (isMcpSmokeRun) {
+    void runSmokeMcp()
     return
   }
 

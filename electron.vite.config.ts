@@ -14,7 +14,11 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        input: { index: resolve(__dirname, 'src/main/index.ts') }
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          // MCP Server 独立入口：由外部 Agent 用 node 直接拉起
+          mcp: resolve(__dirname, 'src/main/mcp/index.ts')
+        }
       }
     }
   },

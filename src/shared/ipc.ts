@@ -18,6 +18,10 @@ export const IpcChannel = {
   providerSave: 'provider:save',
   providerRemove: 'provider:remove',
   providerTest: 'provider:test',
+  routeList: 'route:list',
+  routeSave: 'route:save',
+  routeRemove: 'route:remove',
+  usageSummary: 'usage:summary',
   generateStart: 'generate:start',
   generateAbort: 'generate:abort',
   /** 主进程 → 渲染进程的流式推送通道 */
@@ -88,7 +92,7 @@ export const draftSaveSchema = z.object({
 
 export const providerSaveSchema = z.object({
   id: idSchema.optional(),
-  kind: z.string().max(40).optional(),
+  kind: z.enum(['openai-compatible', 'custom-reverse-proxy']).optional(),
   name: z.string().trim().min(1, '名称不能为空').max(80),
   baseUrl: z
     .string()
@@ -98,7 +102,18 @@ export const providerSaveSchema = z.object({
     .regex(/^https?:\/\//i, '需以 http:// 或 https:// 开头'),
   model: z.string().trim().min(1, '模型名不能为空').max(200),
   apiKey: z.string().max(500).optional(),
-  enabled: z.boolean().optional()
+  enabled: z.boolean().optional(),
+  headers: z.record(z.string().max(80), z.string().max(2000)).optional(),
+  rateLimitPerMin: z.number().int().min(0).max(6000).optional(),
+  riskAccepted: z.boolean().optional()
+})
+
+export const roleRouteSaveSchema = z.object({
+  role: z.enum(['architect', 'writer', 'reviewer', 'extractor', 'embedder']),
+  providerId: idSchema,
+  model: z.string().max(200).optional(),
+  fallbackChain: z.array(idSchema).max(5).optional(),
+  maxConcurrency: z.number().int().min(1).max(8).optional()
 })
 
 export const requestIdSchema = z.string().min(1).max(100)

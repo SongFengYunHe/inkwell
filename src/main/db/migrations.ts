@@ -89,5 +89,43 @@ export const migrations: Migration[] = [
         updated_at INTEGER NOT NULL
       )`
     ]
+  },
+  {
+    version: 3,
+    name: 'provider_routing_and_usage',
+    statements: [
+      `ALTER TABLE provider ADD COLUMN headers TEXT NOT NULL DEFAULT '{}'`,
+      `ALTER TABLE provider ADD COLUMN rate_limit_per_min INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE provider ADD COLUMN risk_accepted INTEGER NOT NULL DEFAULT 0`,
+
+      `CREATE TABLE role_route (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        role TEXT NOT NULL,
+        provider_id INTEGER NOT NULL REFERENCES provider(id) ON DELETE CASCADE,
+        model TEXT NOT NULL DEFAULT '',
+        fallback_chain TEXT NOT NULL DEFAULT '[]',
+        max_concurrency INTEGER NOT NULL DEFAULT 2,
+        updated_at INTEGER NOT NULL
+      )`,
+
+      `CREATE UNIQUE INDEX role_route_role_uq ON role_route (role)`,
+
+      `CREATE TABLE llm_call (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider_id INTEGER,
+        provider_name TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        role TEXT NOT NULL DEFAULT '',
+        prompt_tokens INTEGER NOT NULL DEFAULT 0,
+        completion_tokens INTEGER NOT NULL DEFAULT 0,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        success INTEGER NOT NULL DEFAULT 1,
+        error TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL
+      )`,
+
+      `CREATE INDEX llm_call_created_idx ON llm_call (created_at)`,
+      `CREATE INDEX llm_call_role_idx ON llm_call (role)`
+    ]
   }
 ]

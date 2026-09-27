@@ -7,6 +7,8 @@ export interface OpenAiCompatibleConfig {
   apiKey: string
   /** 连接测试用的默认模型；正式生成时以 ChatRequest.model 为准 */
   model?: string
+  /** 自定义请求头（反代端点常用） */
+  headers?: Record<string, string>
 }
 
 /** 允许用户直接填到 /chat/completions，也允许只填到 /v1 */
@@ -21,16 +23,26 @@ function truncate(text: string, max: number): string {
   return flat.length > max ? `${flat.slice(0, max)}…` : flat
 }
 
-/** 从 SSE 的 data 载荷里取出增量文本 */
-function extractDelta(payload: string): string {
+/** 从 SSE 的 data 载荷里取出增量文本与（可选的）用量 */
+function extractChunk(payload: string): ChatChunk | null {
   try {
     const parsed = JSON.parse(payload) as {
       choices?: Array<{ delta?: { content?: string }; message?: { content?: string } }>
+      usage?: { prompt_tokens?: number; completion_tokens?: number }
     }
     const choice = parsed.choices?.[0]
-    return choice?.delta?.content ?? choice?.message?.content ?? ''
+    const delta = choice?.delta?.content ?? choice?.message?.content ?? ''
+    const usage = parsed.usage
+      ? {
+          promptTokens: parsed.usage.prompt_tokens ?? 0,
+          completionTokens: parsed.usage.completion_tokens ?? 0
+        }
+      : undefined
+
+    if (!delta && !usage) return null
+    return usage ? { delta, usage } : { delta }
   } catch {
-    return ''
+    return null
   }
 }
 
@@ -45,7 +57,7 @@ export class OpenAiCompatibleProvider implements ChatProvider {
   }
 
   private headers(): Record<string, string> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', ...this.config.headers }
     if (this.config.apiKey) headers.Authorization = `Bearer ${this.config.apiKey}`
     return headers
   }
@@ -58,6 +70,7 @@ export class OpenAiCompatibleProvider implements ChatProvider {
         model: request.model,
         messages: request.messages,
         stream: true,
+        stream_options: { include_usage: true },
         temperature: request.temperature ?? 0.85,
         ...(request.maxTokens ? { max_tokens: request.maxTokens } : {})
       }),
@@ -93,8 +106,8 @@ export class OpenAiCompatibleProvider implements ChatProvider {
             await reader.cancel().catch(() => undefined)
             return
           }
-          const delta = extractDelta(payload)
-          if (delta) yield { delta }
+          const delta = extractChunk(payload)
+          if (delta) yield delta
         }
       }
     } finally {

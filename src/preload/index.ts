@@ -6,9 +6,11 @@ import type {
   GenerateEvent,
   GenerateStartInput,
   InkwellApi,
+  LlmRoleName,
   ProjectCreateInput,
   ProjectUpdateInput,
   ProviderSaveInput,
+  RoleRouteSaveInput,
   WizardEvent,
   WizardStartInput
 } from '@shared/types'
@@ -39,6 +41,14 @@ const api: InkwellApi = {
     save: (input: ProviderSaveInput) => ipcRenderer.invoke(IpcChannel.providerSave, input),
     remove: (id: number) => ipcRenderer.invoke(IpcChannel.providerRemove, id),
     test: (input: ProviderSaveInput) => ipcRenderer.invoke(IpcChannel.providerTest, input)
+  },
+  route: {
+    list: () => ipcRenderer.invoke(IpcChannel.routeList),
+    save: (input: RoleRouteSaveInput) => ipcRenderer.invoke(IpcChannel.routeSave, input),
+    remove: (role: LlmRoleName) => ipcRenderer.invoke(IpcChannel.routeRemove, role)
+  },
+  usage: {
+    summary: () => ipcRenderer.invoke(IpcChannel.usageSummary)
   },
   generate: {
     start: (input: GenerateStartInput) => ipcRenderer.invoke(IpcChannel.generateStart, input),

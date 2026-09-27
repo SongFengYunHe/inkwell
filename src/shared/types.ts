@@ -102,17 +102,28 @@ export type DraftSaveInput = Partial<Omit<ChapterDraft, 'id' | 'createdAt' | 'up
   chapterNo: number
 }
 
-/** 模型接入配置（对应计划书 §5.1 `provider` 表，M1 仅支持 openai-compatible） */
+/** 接入类型：官方/中转（OpenAI 兼容）与自定义反代端点 */
+export type ProviderKind = 'openai-compatible' | 'custom-reverse-proxy'
+
+/** 创作角色（计划书 §6.1） */
+export type LlmRoleName = 'architect' | 'writer' | 'reviewer' | 'extractor' | 'embedder'
+
+/** 模型接入配置（对应计划书 §5.1 `provider` 表） */
 export interface Provider {
   id: number
-  /** openai-compatible（M1 唯一支持的类型） */
-  kind: string
+  kind: ProviderKind
   name: string
   baseUrl: string
   model: string
   enabled: boolean
   /** 是否已保存密钥（密钥本身永不出主进程） */
   hasApiKey: boolean
+  /** 自定义请求头（反代端点常用） */
+  headers: Record<string, string>
+  /** 每分钟最大请求数，0 表示不限速 */
+  rateLimitPerMin: number
+  /** 反代端点的风险确认 */
+  riskAccepted: boolean
   createdAt: number
   updatedAt: number
 }
@@ -120,12 +131,61 @@ export interface Provider {
 /** 保存接入配置入参；`apiKey` 留空表示保持原密钥不变 */
 export interface ProviderSaveInput {
   id?: number
-  kind?: string
+  kind?: ProviderKind
   name: string
   baseUrl: string
   model: string
   apiKey?: string
   enabled?: boolean
+  headers?: Record<string, string>
+  rateLimitPerMin?: number
+  riskAccepted?: boolean
+}
+
+/** 角色 → 模型路由 */
+export interface RoleRoute {
+  id: number
+  role: LlmRoleName
+  providerId: number
+  /** 留空表示沿用 provider 的默认模型 */
+  model: string
+  fallbackChain: number[]
+  maxConcurrency: number
+  updatedAt: number
+}
+
+export interface RoleRouteSaveInput {
+  role: LlmRoleName
+  providerId: number
+  model?: string
+  fallbackChain?: number[]
+  maxConcurrency?: number
+}
+
+/** 单次调用的用量记录 */
+export interface LlmCallRecord {
+  id: number
+  providerId: number | null
+  providerName: string
+  model: string
+  role: string
+  promptTokens: number
+  completionTokens: number
+  durationMs: number
+  success: boolean
+  error: string
+  createdAt: number
+}
+
+/** 用量仪表盘数据 */
+export interface UsageSummary {
+  totalCalls: number
+  failedCalls: number
+  promptTokens: number
+  completionTokens: number
+  totalDurationMs: number
+  byRole: Array<{ role: string; calls: number; tokens: number }>
+  recent: LlmCallRecord[]
 }
 
 /** 连接测试结果 */
@@ -221,6 +281,14 @@ export interface InkwellApi {
     remove(id: number): Promise<void>
     /** 用当前表单值直接测试连通性（不落库） */
     test(input: ProviderSaveInput): Promise<ProviderTestResult>
+  }
+  route: {
+    list(): Promise<RoleRoute[]>
+    save(input: RoleRouteSaveInput): Promise<RoleRoute>
+    remove(role: LlmRoleName): Promise<void>
+  }
+  usage: {
+    summary(): Promise<UsageSummary>
   }
   generate: {
     start(input: GenerateStartInput): Promise<void>

@@ -15,6 +15,11 @@ export interface ChatRequest {
 export interface ChatChunk {
   /** 增量文本 */
   delta: string
+  /** 部分服务端会在流末尾返回用量（需要 stream_options.include_usage） */
+  usage?: {
+    promptTokens: number
+    completionTokens: number
+  }
 }
 
 /**

@@ -86,9 +86,55 @@ export const provider = sqliteTable('provider', {
   apiKeyEnc: text('api_key_enc').notNull().default(''),
   model: text('model').notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  /** 自定义请求头（反代端点常用，如 Referer / Cookie） */
+  headers: text('headers', { mode: 'json' }).$type<Record<string, string>>().notNull().default({}),
+  /** 每分钟最大请求数，0 表示不限速 */
+  rateLimitPerMin: integer('rate_limit_per_min').notNull().default(0),
+  /** 反代端点需用户勾选风险确认后才可启用 */
+  riskAccepted: integer('risk_accepted', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull()
 })
+
+/** 角色 → 模型路由（计划书 §6.1 RoleRouter） */
+export const roleRoute = sqliteTable(
+  'role_route',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** architect | writer | reviewer | extractor | embedder */
+    role: text('role').notNull(),
+    providerId: integer('provider_id')
+      .notNull()
+      .references(() => provider.id, { onDelete: 'cascade' }),
+    /** 留空表示用 provider 的默认模型 */
+    model: text('model').notNull().default(''),
+    /** 备用 provider id 链（JSON 数组），主 provider 失败时依次尝试 */
+    fallbackChain: text('fallback_chain', { mode: 'json' }).$type<number[]>().notNull().default([]),
+    maxConcurrency: integer('max_concurrency').notNull().default(2),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (t) => [uniqueIndex('role_route_role_uq').on(t.role)]
+)
+
+/** 调用审计与用量记账（计划书 §5.1 `llm_call`） */
+export const llmCall = sqliteTable(
+  'llm_call',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** 不设外键：provider 删除后仍保留用量历史 */
+    providerId: integer('provider_id'),
+    providerName: text('provider_name').notNull().default(''),
+    model: text('model').notNull().default(''),
+    role: text('role').notNull().default(''),
+    promptTokens: integer('prompt_tokens').notNull().default(0),
+    completionTokens: integer('completion_tokens').notNull().default(0),
+    durationMs: integer('duration_ms').notNull().default(0),
+    success: integer('success', { mode: 'boolean' }).notNull().default(true),
+    error: text('error').notNull().default(''),
+    createdAt: integer('created_at').notNull()
+  },
+  (t) => [index('llm_call_created_idx').on(t.createdAt), index('llm_call_role_idx').on(t.role)]
+)
 
 /** 迁移版本表（schema_version 驱动迁移） */
 export const schemaVersion = sqliteTable('schema_version', {

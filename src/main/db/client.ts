@@ -17,6 +17,8 @@ export function initDatabase(filePath: string): InkwellDatabase {
   connection.pragma('journal_mode = WAL')
   connection.pragma('foreign_keys = ON')
   connection.pragma('synchronous = NORMAL')
+  // 桌面应用与 MCP Server 可能同时打开同一个库，给写入留出重试时间
+  connection.pragma('busy_timeout = 5000')
 
   runMigrations(connection)
 
