@@ -34,6 +34,9 @@ pnpm-debug.log*
 *.pem
 secrets/
 
+# ---- 仅本地保留（不随仓库分发）----
+docs/
+
 # ---- 编辑器 / 系统 ----
 .vscode/*
 !.vscode/extensions.json
