@@ -1,0 +1,20 @@
+@import 'tailwindcss';
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 阅读器级正文排版（M1 起用于正文 Tab） */
+.reader-body {
+  font-family: 'Songti SC', 'SimSun', 'Source Han Serif SC', serif;
+  line-height: 1.9;
+  letter-spacing: 0.01em;
+}
