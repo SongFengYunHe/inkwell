@@ -1,0 +1,43 @@
+# ---- 依赖 ----
+node_modules/
+.pnpm-store/
+
+# ---- 构建产物 ----
+dist/
+out/
+build/
+release/
+dist-electron/
+*.tsbuildinfo
+.vite/
+coverage/
+
+# ---- 日志 ----
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- 本地数据库（用户数据，不入库）----
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+.inkwell/
+
+# ---- 环境与密钥（严禁入库）----
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+
+# ---- 编辑器 / 系统 ----
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
