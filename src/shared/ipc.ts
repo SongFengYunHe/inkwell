@@ -22,6 +22,7 @@ export const IpcChannel = {
   routeSave: 'route:save',
   routeRemove: 'route:remove',
   usageSummary: 'usage:summary',
+  bridgeExportTask: 'bridge:export-task',
   generateStart: 'generate:start',
   generateAbort: 'generate:abort',
   /** 主进程 → 渲染进程的流式推送通道 */
@@ -30,7 +31,8 @@ export const IpcChannel = {
   wizardAbort: 'wizard:abort',
   /** 主进程 → 渲染进程的向导进度推送通道 */
   wizardEvent: 'wizard:event',
-  appDbPath: 'app:db-path'
+  appDbPath: 'app:db-path',
+  appMcpEntry: 'app:mcp-entry'
 } as const
 
 export type IpcChannelName = (typeof IpcChannel)[keyof typeof IpcChannel]
@@ -114,6 +116,11 @@ export const roleRouteSaveSchema = z.object({
   model: z.string().max(200).optional(),
   fallbackChain: z.array(idSchema).max(5).optional(),
   maxConcurrency: z.number().int().min(1).max(8).optional()
+})
+
+export const exportTaskSchema = z.object({
+  projectId: projectIdSchema,
+  chapterNo: z.number().int().min(1).max(99_999)
 })
 
 export const requestIdSchema = z.string().min(1).max(100)

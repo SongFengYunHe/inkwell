@@ -254,6 +254,14 @@ export interface BriefSuggestion {
   suspenseHook: string
 }
 
+/** 任务单桥导出结果 */
+export interface BridgeTaskExport {
+  /** 落盘路径 */
+  path: string
+  /** 任务单全文（含提示词），可直接丢给任意 Agent */
+  content: string
+}
+
 /** 预加载脚本向渲染进程暴露的 API 契约 */
 export interface InkwellApi {
   project: {
@@ -290,6 +298,10 @@ export interface InkwellApi {
   usage: {
     summary(): Promise<UsageSummary>
   }
+  bridge: {
+    /** 任务单桥：导出某章的任务单（含完整提示词）到本地文件 */
+    exportTask(projectId: number, chapterNo: number): Promise<BridgeTaskExport>
+  }
   generate: {
     start(input: GenerateStartInput): Promise<void>
     abort(requestId: string): Promise<void>
@@ -304,5 +316,7 @@ export interface InkwellApi {
   app: {
     /** 数据库文件绝对路径，用于排查与备份 */
     dbPath(): Promise<string>
+    /** MCP Server 入口的绝对路径，供外部 Agent 配置使用 */
+    mcpEntry(): Promise<string>
   }
 }

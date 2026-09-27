@@ -19,6 +19,20 @@
 - 按细纲装配上下文（作品设定 + 总大纲 + 本章细纲 + 上一章结尾节选）生成单章，结果按版本落盘
 - 工作区改为「章节导航 + 细纲 / 设定与大纲 / 正文」三栏布局
 
+**M1.5 · 一句话成书入口 —— 已完成**
+
+- 新建向导：填一句话灵感 → AI 生成设定 + 总大纲 + 逐章细纲（分批生成、可中断、可续跑）
+- 细纲「AI 补全」：按总大纲补全/强化单章细纲，先出建议再由你确认落库
+
+**M2 · 接入层三件套 —— 已完成**
+
+- **RoleRouter**：5 个创作角色（架构 / 写作 / 审稿 / 抽取 / 向量）分别映射到「端点 + 模型」，支持 fallback 链与并发上限
+- **用量记账**：每次调用写入 `llm_call`（tokens / 耗时 / 成功失败），设置页有仪表盘
+- **官方预设**：OpenAI / DeepSeek / Kimi / 通义 / 智谱 / Gemini / Ollama 一键填充
+- **方式 B · MCP Server**：本机 stdio MCP，6 个工具，外部 Agent 用自身免费额度驱动整本创作
+- **方式 C · 自定义反代**：自定义请求头 + 严格限速 + 风险确认（未确认不允许保存）
+- **任务单桥**：导出 `chapter_0001.task.md`（含完整提示词），把产出的正文粘回即可落盘
+
 ## 技术栈
 
 | 层 | 选型 |
@@ -28,6 +42,7 @@
 | UI | React 19 + Tailwind CSS 4 + Zustand |
 | 数据 | better-sqlite3（N-API）+ Drizzle ORM |
 | 校验 | zod（所有 IPC 入参） |
+| Agent 接入 | @modelcontextprotocol/sdk（stdio MCP Server） |
 
 ## 快速开始
 
@@ -38,6 +53,7 @@ npm run typecheck    # 类型检查
 npm run build        # 构建到 out/
 npm run smoke        # 构建并跑一次持久化自检
 npm run smoke:llm    # 构建并跑一次「细纲 → 流式生成 → 落盘」端到端自检（本地假端点，无需 API Key）
+npm run smoke:mcp    # 构建并以真实 MCP 协议拉起 MCP Server，模拟 Agent 自动写完 5 章
 ```
 
 > **国内网络**：若 `npm install` 后 Electron 二进制下载失败，先设置镜像再重试：
@@ -60,15 +76,30 @@ npx electron . --smoke   # 第二次：重启后读回校验   → PERSISTENCE_O
 
 ```powershell
 npx electron . --smoke-llm
-# 起一个本地 OpenAI 兼容假端点，验证：流式增量 → 组装上下文 → 落盘 → 重写生成新版本
-#   全部通过时输出 M1_LLM_PIPELINE_OK
+# 起一个本地 OpenAI 兼容假端点，验证：向导(大纲+细纲) → 按细纲生成 → 续写 → 重写 → 细纲扩写
+#   全部通过时输出 PIPELINE_OK
+```
+
+### MCP 协议自检
+
+```powershell
+npx electron . --smoke-mcp
+# 以真实 MCP 协议（stdio）拉起 out/main/mcp.js，扮演外部 Agent 走
+#   status → next_task → save_draft ×5，并校验落盘与进度推进 → MCP_PIPELINE_OK
 ```
 
 ### 上手流程
 
-1. 书架右上「设置」→ 填 Base URL / 模型名 / API Key → 「测试连接」→「保存」
-2. 书架新建项目 → 工作区「细纲」Tab 填第 1 章细纲（目的 / 事件 / 角色 / 节拍 / 钩子）
-3. 切到「正文」Tab → 点「生成正文」；不满意可「重写」，写短了可「续写」，文字毛糙可「润色」
+1. 书架右上「设置」→「官方 API」填 Base URL / 模型名 / API Key →「测试连接」→「保存」
+2. 书架新建项目：**填了一句话灵感就会自动生成设定、大纲与全部章节细纲**
+3. 工作区「细纲」Tab 可逐章微调，也能点「AI 补全本章细纲」
+4. 切到「正文」Tab → 点「生成正文」；不满意可「重写」，写短了可「续写」，文字毛糙可「润色」
+
+#### 用外部 Agent 零成本跑完整本
+
+1. 先执行一次 `npm run build` 生成 `out/main/mcp.js`
+2. 在设置页「Agent 模式（MCP）」复制给出的 `mcpServers` 配置，粘贴到 Agent（TRAE WorkBuddy / Claude Code / Cursor）的 MCP 配置里
+3. 让 Agent 循环调用 `inkwell_next_task` → 生成 → `inkwell_save_draft`，直到 `done: true`
 
 ## 目录结构
 
@@ -78,16 +109,19 @@ src/
 │  ├─ index.ts           # 入口：初始化 DB、建窗、注册 IPC
 │  ├─ smoke.ts           # --smoke 持久化自检
 │  ├─ smoke-llm.ts       # --smoke-llm 生成链路自检
+│  ├─ smoke-mcp.ts       # --smoke-mcp MCP 协议自检
 │  ├─ db/                # schema / migrations / client / repositories
 │  ├─ providers/         # ChatProvider 抽象 + OpenAI 兼容实现 + 接入配置
-│  ├─ llm/               # 单章生成编排
+│  ├─ llm/               # invoke(路由+记账) / route / usage / context / generate / wizard / brief
+│  ├─ mcp/               # MCP Server（stdio）入口与工具实现
+│  ├─ bridge/            # 任务单桥（导出 task.md）
 │  ├─ prompts/           # 内置提示词模板
 │  ├─ security/          # safeStorage 密钥加密
 │  └─ ipc/               # IPC handlers（zod 校验）
 ├─ preload/              # contextBridge 白名单 API
 ├─ renderer/src/
 │  ├─ pages/             # 书架 / 工作区 / 设置
-│  ├─ components/        # 章节导航 / 细纲 / 大纲 / 正文面板
+│  ├─ components/        # 章节导航 / 细纲 / 大纲 / 正文 / 设置各面板
 │  └─ stores/            # zustand
 └─ shared/               # 跨进程共享的类型与 IPC 契约
 scripts/                 # Git 每轮提交与安全回滚脚本

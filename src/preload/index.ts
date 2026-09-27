@@ -50,6 +50,10 @@ const api: InkwellApi = {
   usage: {
     summary: () => ipcRenderer.invoke(IpcChannel.usageSummary)
   },
+  bridge: {
+    exportTask: (projectId: number, chapterNo: number) =>
+      ipcRenderer.invoke(IpcChannel.bridgeExportTask, { projectId, chapterNo })
+  },
   generate: {
     start: (input: GenerateStartInput) => ipcRenderer.invoke(IpcChannel.generateStart, input),
     abort: (requestId: string) => ipcRenderer.invoke(IpcChannel.generateAbort, requestId),
@@ -73,7 +77,8 @@ const api: InkwellApi = {
     }
   },
   app: {
-    dbPath: () => ipcRenderer.invoke(IpcChannel.appDbPath)
+    dbPath: () => ipcRenderer.invoke(IpcChannel.appDbPath),
+    mcpEntry: () => ipcRenderer.invoke(IpcChannel.appMcpEntry)
   }
 }
 

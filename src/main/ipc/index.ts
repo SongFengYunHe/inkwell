@@ -3,6 +3,7 @@ import {
   briefExpandSchema,
   briefSaveSchema,
   draftSaveSchema,
+  exportTaskSchema,
   generateStartSchema,
   idSchema,
   projectCreateSchema,
@@ -13,8 +14,10 @@ import {
   roleRouteSaveSchema,
   wizardStartSchema
 } from '@shared/ipc'
+import { join } from 'node:path'
 import type { GenerateEvent, WizardEvent } from '@shared/types'
-import { ipcMain, type WebContents } from 'electron'
+import { app, ipcMain, type WebContents } from 'electron'
+import { exportChapterTask } from '../bridge/task-slip'
 import { getDatabasePath } from '../db/client'
 import * as repo from '../db/repositories'
 import { expandBrief } from '../llm/brief'
@@ -115,6 +118,12 @@ export function registerIpcHandlers(): void {
   /* --------------------------------- 用量 --------------------------------- */
   ipcMain.handle(IpcChannel.usageSummary, () => getUsageSummary())
 
+  /* ------------------------------- 任务单桥 -------------------------------- */
+  ipcMain.handle(IpcChannel.bridgeExportTask, (_event, raw: unknown) => {
+    const input = exportTaskSchema.parse(raw)
+    return exportChapterTask(input.projectId, input.chapterNo)
+  })
+
   /* -------------------------------- 单章生成 ------------------------------- */
   ipcMain.handle(IpcChannel.generateStart, (event, raw: unknown) => {
     const input = generateStartSchema.parse(raw)
@@ -187,4 +196,5 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IpcChannel.appDbPath, () => getDatabasePath())
+  ipcMain.handle(IpcChannel.appMcpEntry, () => join(app.getAppPath(), 'out', 'main', 'mcp.js'))
 }

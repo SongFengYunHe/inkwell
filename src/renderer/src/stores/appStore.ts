@@ -14,7 +14,12 @@ import type {
   ProviderTestResult,
   WizardEvent,
   WizardProgress,
-  BriefExpandInput
+  BriefExpandInput,
+  BridgeTaskExport,
+  LlmRoleName,
+  RoleRoute,
+  RoleRouteSaveInput,
+  UsageSummary
 } from '@shared/types'
 import { create } from 'zustand'
 
@@ -38,6 +43,8 @@ interface AppState {
   briefs: ChapterBrief[]
   drafts: ChapterDraft[]
   providers: Provider[]
+  routes: RoleRoute[]
+  usage: UsageSummary | null
   currentChapterNo: number
   loading: boolean
   error: string | null
@@ -77,6 +84,14 @@ interface AppState {
   removeProvider: (id: number) => Promise<void>
   testProvider: (input: ProviderSaveInput) => Promise<ProviderTestResult | null>
 
+  loadRoutes: () => Promise<void>
+  saveRoute: (input: RoleRouteSaveInput) => Promise<void>
+  removeRoute: (role: LlmRoleName) => Promise<void>
+  loadUsage: () => Promise<void>
+  exportTask: (projectId: number, chapterNo: number) => Promise<BridgeTaskExport | null>
+  /** 任务单桥：把外部 Agent 产出的文本存为本章新版本 */
+  importDraft: (projectId: number, chapterNo: number, text: string) => Promise<ChapterDraft | null>
+
   generate: (mode: GenerationMode) => Promise<void>
   abortGeneration: () => Promise<void>
   handleGenerateEvent: (event: GenerateEvent) => void
@@ -112,6 +127,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   briefs: [],
   drafts: [],
   providers: [],
+  routes: [],
+  usage: null,
   currentChapterNo: 1,
   loading: false,
   error: null,
@@ -226,6 +243,50 @@ export const useAppStore = create<AppState>((set, get) => ({
   testProvider: async (input) => {
     const result = await guard(set, () => window.inkwell.provider.test(input))
     return result ?? null
+  },
+
+  loadRoutes: async () => {
+    const routes = await guard(set, () => window.inkwell.route.list())
+    if (routes) set({ routes })
+  },
+
+  saveRoute: async (input) => {
+    const saved = await guard(set, () => window.inkwell.route.save(input))
+    if (!saved) return
+    await get().loadRoutes()
+  },
+
+  removeRoute: async (role) => {
+    await guard(set, () => window.inkwell.route.remove(role))
+    await get().loadRoutes()
+  },
+
+  loadUsage: async () => {
+    const summary = await guard(set, () => window.inkwell.usage.summary())
+    if (summary) set({ usage: summary })
+  },
+
+  exportTask: async (projectId, chapterNo) => {
+    const result = await guard(set, () => window.inkwell.bridge.exportTask(projectId, chapterNo))
+    return result ?? null
+  },
+
+  importDraft: async (projectId, chapterNo, text) => {
+    const saved = await guard(set, async () => {
+      const drafts = await window.inkwell.draft.list(projectId)
+      const versions = drafts.filter((item) => item.chapterNo === chapterNo)
+      const nextVersion = (versions[0]?.version ?? 0) + 1
+      return window.inkwell.draft.save({
+        projectId,
+        chapterNo,
+        version: nextVersion,
+        status: 'draft',
+        source: 'write',
+        content: text
+      })
+    })
+    if (saved) await get().reloadDrafts()
+    return saved ?? null
   },
 
   generate: async (mode) => {
