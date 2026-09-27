@@ -1,17 +1,34 @@
 import { useEffect } from 'react'
 import Bookshelf from './pages/Bookshelf'
+import Settings from './pages/Settings'
 import Workspace from './pages/Workspace'
 import { useAppStore } from './stores/appStore'
 
 export default function App() {
+  const view = useAppStore((s) => s.view)
   const activeProjectId = useAppStore((s) => s.activeProjectId)
   const error = useAppStore((s) => s.error)
   const clearError = useAppStore((s) => s.clearError)
   const loadProjects = useAppStore((s) => s.loadProjects)
+  const handleGenerateEvent = useAppStore((s) => s.handleGenerateEvent)
 
   useEffect(() => {
     void loadProjects()
   }, [loadProjects])
+
+  // 订阅主进程的流式生成事件（StrictMode 下会订阅-退订-再订阅，无副作用）
+  useEffect(() => {
+    return window.inkwell.generate.onEvent(handleGenerateEvent)
+  }, [handleGenerateEvent])
+
+  const page =
+    view === 'settings' ? (
+      <Settings />
+    ) : view === 'workspace' && activeProjectId !== null ? (
+      <Workspace />
+    ) : (
+      <Bookshelf />
+    )
 
   return (
     <div className="flex h-full flex-col bg-stone-100 text-stone-800">
@@ -23,7 +40,7 @@ export default function App() {
           </button>
         </div>
       )}
-      {activeProjectId === null ? <Bookshelf /> : <Workspace />}
+      <div className="min-h-0 flex-1">{page}</div>
     </div>
   )
 }

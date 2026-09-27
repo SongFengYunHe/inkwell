@@ -20,8 +20,9 @@ export default function Bookshelf() {
   const projects = useAppStore((s) => s.projects)
   const loading = useAppStore((s) => s.loading)
   const createProject = useAppStore((s) => s.createProject)
-  const selectProject = useAppStore((s) => s.selectProject)
+  const openProject = useAppStore((s) => s.openProject)
   const removeProject = useAppStore((s) => s.removeProject)
+  const setView = useAppStore((s) => s.setView)
 
   const [name, setName] = useState('')
   const [genre, setGenre] = useState(GENRES[0])
@@ -43,7 +44,16 @@ export default function Bookshelf() {
           <h1 className="text-2xl font-semibold tracking-tight">书架</h1>
           <p className="mt-1 text-sm text-stone-500">只需一句话灵感，即可开始一部长篇。</p>
         </div>
-        <span className="text-xs text-stone-400">{loading ? '加载中…' : `共 ${projects.length} 个项目`}</span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-stone-400">{loading ? '加载中…' : `共 ${projects.length} 个项目`}</span>
+          <button
+            type="button"
+            onClick={() => setView('settings')}
+            className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm text-stone-600 transition hover:bg-stone-50"
+          >
+            设置
+          </button>
+        </div>
       </header>
 
       <div className="grid flex-1 grid-cols-1 gap-8 overflow-hidden lg:grid-cols-[320px_1fr]">
@@ -122,7 +132,7 @@ export default function Bookshelf() {
                 <article
                   key={project.id}
                   className="group flex cursor-pointer flex-col justify-between gap-4 rounded-xl border border-stone-200 bg-white p-4 shadow-sm transition hover:border-amber-400 hover:shadow"
-                  onClick={() => void selectProject(project.id)}
+                  onClick={() => void openProject(project.id)}
                 >
                   <div>
                     <h3 className="truncate text-base font-medium text-stone-800">{project.name}</h3>
