@@ -13,7 +13,8 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "smoke": "electron-vite build && electron . --smoke",
     "smoke:llm": "electron-vite build && electron . --smoke-llm",
-    "smoke:mcp": "electron-vite build && electron . --smoke-mcp"
+    "smoke:mcp": "electron-vite build && electron . --smoke-mcp",
+    "smoke:m3": "electron-vite build && electron . --smoke-m3"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",

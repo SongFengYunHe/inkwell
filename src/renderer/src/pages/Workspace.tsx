@@ -2,16 +2,19 @@ import { useState } from 'react'
 import BriefPanel from '../components/BriefPanel'
 import ChapterNav from '../components/ChapterNav'
 import DraftPanel from '../components/DraftPanel'
+import MemoryPanel from '../components/MemoryPanel'
 import OutlinePanel from '../components/OutlinePanel'
+import PipelineBar from '../components/PipelineBar'
 import WizardBanner from '../components/WizardBanner'
 import { useAppStore } from '../stores/appStore'
 
-type Tab = 'brief' | 'outline' | 'draft'
+type Tab = 'brief' | 'outline' | 'draft' | 'memory'
 
 const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'brief', label: '细纲' },
   { key: 'outline', label: '设定与大纲' },
-  { key: 'draft', label: '正文' }
+  { key: 'draft', label: '正文' },
+  { key: 'memory', label: '记忆' }
 ]
 
 export default function Workspace() {
@@ -62,6 +65,7 @@ export default function Workspace() {
       </header>
 
       <WizardBanner />
+      <PipelineBar />
 
       <div className="flex min-h-0 flex-1">
         <ChapterNav />
@@ -91,9 +95,13 @@ export default function Workspace() {
               </div>
             ) : (
               <div className="h-full overflow-y-auto p-5">
-                <div className="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
-                  {tab === 'outline' ? <OutlinePanel /> : <BriefPanel />}
-                </div>
+                {tab === 'memory' ? (
+                  <MemoryPanel />
+                ) : (
+                  <div className="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
+                    {tab === 'outline' ? <OutlinePanel /> : <BriefPanel />}
+                  </div>
+                )}
               </div>
             )}
           </div>

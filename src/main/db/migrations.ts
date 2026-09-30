@@ -127,5 +127,117 @@ export const migrations: Migration[] = [
       `CREATE INDEX llm_call_created_idx ON llm_call (created_at)`,
       `CREATE INDEX llm_call_role_idx ON llm_call (role)`
     ]
+  },
+  {
+    version: 4,
+    name: 'memory_truth_files_and_pipeline',
+    statements: [
+      // 章节记忆快照（真相文件 chapter_summaries 的载体，附带世界状态增量）
+      `CREATE TABLE memory_chapter (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+        chapter_no INTEGER NOT NULL,
+        draft_id INTEGER,
+        summary TEXT NOT NULL DEFAULT '',
+        character_states TEXT NOT NULL DEFAULT '[]',
+        continuity_facts TEXT NOT NULL DEFAULT '{}',
+        thread_updates TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+      `CREATE UNIQUE INDEX memory_chapter_project_chapter_uq ON memory_chapter (project_id, chapter_no)`,
+
+      // 角色卡 + 当前状态（真相文件 character_matrix 的载体）
+      `CREATE TABLE character (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT '',
+        appearance TEXT NOT NULL DEFAULT '',
+        personality TEXT NOT NULL DEFAULT '',
+        background TEXT NOT NULL DEFAULT '',
+        abilities TEXT NOT NULL DEFAULT '',
+        motivation TEXT NOT NULL DEFAULT '',
+        relationships TEXT NOT NULL DEFAULT '',
+        cs_location TEXT NOT NULL DEFAULT '',
+        cs_power TEXT NOT NULL DEFAULT '',
+        cs_state TEXT NOT NULL DEFAULT '',
+        cs_items TEXT NOT NULL DEFAULT '[]',
+        cs_recent TEXT NOT NULL DEFAULT '',
+        cs_updated_ch INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+      `CREATE UNIQUE INDEX character_project_name_uq ON character (project_id, name)`,
+
+      // 主线/支线/伏笔台账（真相文件 pending_hooks / subplot_board 的载体）
+      `CREATE TABLE outline_thread (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'plot',
+        start_ch INTEGER NOT NULL DEFAULT 0,
+        end_ch INTEGER NOT NULL DEFAULT 0,
+        intent TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'planned',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+      `CREATE UNIQUE INDEX outline_thread_project_title_uq ON outline_thread (project_id, title)`,
+
+      // 伏笔状态变更记录
+      `CREATE TABLE thread_event (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+        thread_id INTEGER NOT NULL REFERENCES outline_thread(id) ON DELETE CASCADE,
+        chapter_no INTEGER NOT NULL DEFAULT 0,
+        draft_id INTEGER,
+        event TEXT NOT NULL DEFAULT 'progressing',
+        evidence TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL
+      )`,
+      `CREATE INDEX thread_event_thread_idx ON thread_event (thread_id)`,
+
+      // 审稿报告（多维审计结果，JSON）
+      `CREATE TABLE review (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+        draft_id INTEGER,
+        chapter_no INTEGER NOT NULL,
+        idx INTEGER NOT NULL DEFAULT 1,
+        content TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL
+      )`,
+      `CREATE INDEX review_project_chapter_idx ON review (project_id, chapter_no)`,
+
+      // 连写任务
+      `CREATE TABLE pipeline_run (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+        from_ch INTEGER NOT NULL,
+        to_ch INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'running',
+        cursor INTEGER NOT NULL DEFAULT 1,
+        require_accept INTEGER NOT NULL DEFAULT 0,
+        steer_guidance TEXT NOT NULL DEFAULT '',
+        error TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+      `CREATE INDEX pipeline_run_project_idx ON pipeline_run (project_id)`,
+
+      // 步骤级进度（断点恢复）
+      `CREATE TABLE pipeline_step (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id INTEGER NOT NULL REFERENCES pipeline_run(id) ON DELETE CASCADE,
+        chapter_no INTEGER NOT NULL,
+        step TEXT NOT NULL,
+        ok INTEGER NOT NULL DEFAULT 0,
+        attempt INTEGER NOT NULL DEFAULT 1,
+        error TEXT NOT NULL DEFAULT '',
+        updated_at INTEGER NOT NULL
+      )`,
+      `CREATE UNIQUE INDEX pipeline_step_run_chapter_step_uq ON pipeline_step (run_id, chapter_no, step)`
+    ]
   }
 ]

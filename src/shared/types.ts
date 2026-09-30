@@ -262,6 +262,201 @@ export interface BridgeTaskExport {
   content: string
 }
 
+/* ============================ M3：记忆与连写 ============================ */
+
+/** 角色当前状态增量（记忆回写产出，投影到 character 表） */
+export interface CharacterStateDelta {
+  name: string
+  state: string
+  location: string
+  power: string
+  items: string[]
+  recent: string
+}
+
+/** 连续性事实增量（世界状态 / 时间线 / 资源账本） */
+export interface ContinuityFacts {
+  worldState: string
+  timeline: string
+  resourceLedger: string
+  facts: string[]
+}
+
+/** 伏笔台账状态变更 */
+export interface ThreadUpdate {
+  title: string
+  /** plot | subplot | hook */
+  type: string
+  /** planted | progressing | resolved | abandoned */
+  event: string
+  evidence: string
+}
+
+/** 章节记忆快照 */
+export interface MemoryChapter {
+  id: number
+  projectId: number
+  chapterNo: number
+  draftId: number | null
+  summary: string
+  characterStates: CharacterStateDelta[]
+  continuityFacts: ContinuityFacts
+  threadUpdates: ThreadUpdate[]
+  createdAt: number
+  updatedAt: number
+}
+
+/** 角色卡 + 当前状态（真相文件 character_matrix） */
+export interface CharacterCard {
+  id: number
+  projectId: number
+  name: string
+  role: string
+  appearance: string
+  personality: string
+  background: string
+  abilities: string
+  motivation: string
+  relationships: string
+  csLocation: string
+  csPower: string
+  csState: string
+  csItems: string[]
+  csRecent: string
+  csUpdatedCh: number
+  createdAt: number
+  updatedAt: number
+}
+
+/** 主线 / 支线 / 伏笔台账 */
+export interface OutlineThread {
+  id: number
+  projectId: number
+  title: string
+  type: string
+  startCh: number
+  endCh: number
+  intent: string
+  status: string
+  createdAt: number
+  updatedAt: number
+}
+
+/** 伏笔状态变更记录 */
+export interface ThreadEvent {
+  id: number
+  projectId: number
+  threadId: number
+  chapterNo: number
+  draftId: number | null
+  event: string
+  evidence: string
+  createdAt: number
+}
+
+/** 单条审计维度结果 */
+export interface AuditCheck {
+  dimension: string
+  passed: boolean
+  severity: 'info' | 'warn' | 'error'
+  detail: string
+  /** 命中的问题片段（可选，供定位） */
+  evidence?: string
+}
+
+/** 章节审计报告 */
+export interface AuditReport {
+  chapterNo: number
+  passed: boolean
+  score: number
+  checks: AuditCheck[]
+  /** 是否由模型补充了语义审计 */
+  modelAssisted: boolean
+  createdAt: number
+}
+
+/** 七个真相文件（从记忆表投影而来，只读） */
+export interface TruthFiles {
+  projectId: number
+  /** 1. 世界当前状态 */
+  worldState: string
+  /** 2. 角色矩阵与当前状态 */
+  characterMatrix: CharacterCard[]
+  /** 3. 待处理伏笔池 */
+  pendingHooks: OutlineThread[]
+  /** 4. 章节摘要链 */
+  chapterSummaries: Array<{ chapterNo: number; summary: string }>
+  /** 5. 支线进度板 */
+  subplotBoard: OutlineThread[]
+  /** 6. 时间线 */
+  timeline: string
+  /** 7. 资源 / 道具 / 数值账本 */
+  resourceLedger: string
+}
+
+/** 连写任务状态 */
+export type PipelineStatus =
+  | 'running'
+  | 'paused'
+  | 'awaiting_accept'
+  | 'done'
+  | 'failed'
+  | 'aborted'
+  | 'interrupted'
+
+/** 连写任务 */
+export interface PipelineRun {
+  id: number
+  projectId: number
+  fromCh: number
+  toCh: number
+  status: PipelineStatus
+  cursor: number
+  requireAccept: boolean
+  steerGuidance: string
+  error: string
+  createdAt: number
+  updatedAt: number
+}
+
+/** 步骤级进度 */
+export interface PipelineStep {
+  id: number
+  runId: number
+  chapterNo: number
+  /** assemble | draft | audit | memory | skip */
+  step: string
+  ok: boolean
+  attempt: number
+  error: string
+  updatedAt: number
+}
+
+/** 启动连写入参 */
+export interface PipelineStartInput {
+  requestId: string
+  projectId: number
+  fromCh?: number
+  toCh?: number
+  /** 逐章验收：每章生成后暂停，等待用户确认继续 */
+  requireAccept?: boolean
+}
+
+/** 连写过程中的事件（主进程 → 渲染进程推送） */
+export type PipelineEvent =
+  | {
+      requestId: string
+      type: 'progress'
+      run: PipelineRun
+      chapterNo: number
+      step: string
+      message: string
+    }
+  | { requestId: string; type: 'chapter_done'; run: PipelineRun; chapterNo: number; audit: AuditReport | null }
+  | { requestId: string; type: 'awaiting_accept'; run: PipelineRun; chapterNo: number }
+  | { requestId: string; type: 'done'; run: PipelineRun; written: number }
+  | { requestId: string; type: 'error'; run: PipelineRun | null; message: string }
+
 /** 预加载脚本向渲染进程暴露的 API 契约 */
 export interface InkwellApi {
   project: {
@@ -312,6 +507,36 @@ export interface InkwellApi {
     start(input: WizardStartInput): Promise<void>
     abort(requestId: string): Promise<void>
     onEvent(listener: (event: WizardEvent) => void): () => void
+  }
+  /** 记忆面板：七个真相文件 + 章节审计报告 */
+  memory: {
+    /** 读取七个真相文件（只读投影） */
+    truthFiles(projectId: number): Promise<TruthFiles>
+    /** 读取某章最新审计报告 */
+    latestAudit(projectId: number, chapterNo: number): Promise<AuditReport | null>
+    /** 从既有正文按章重算记忆与真相文件（投影重建） */
+    rebuild(projectId: number): Promise<{ chapters: number }>
+  }
+  /** 连写队列（全自动整本 + 断点恢复 + Steer + 逐章验收） */
+  pipeline: {
+    start(input: PipelineStartInput): Promise<void>
+    /** 中断当前连写 */
+    abort(requestId: string): Promise<void>
+    /** 暂停：当前章写完后停下 */
+    pause(requestId: string): Promise<void>
+    /** 继续：从 cursor 处的断点续跑 */
+    resume(requestId: string, projectId: number): Promise<void>
+    /** Steer：注入后续章节的额外要求 / 禁止项 */
+    steer(requestId: string, guidance: string): Promise<void>
+    /** 跳过当前章 */
+    skip(requestId: string): Promise<void>
+    /** 逐章验收：接受本章并继续 */
+    accept(requestId: string): Promise<void>
+    /** 逐章验收：拒绝本章并重写 */
+    reject(requestId: string): Promise<void>
+    /** 取项目最近一次连写任务 */
+    latest(projectId: number): Promise<PipelineRun | null>
+    onEvent(listener: (event: PipelineEvent) => void): () => void
   }
   app: {
     /** 数据库文件绝对路径，用于排查与备份 */

@@ -24,6 +24,12 @@ export interface ChapterPromptContext {
   previousExcerpt: string
   /** 本章已有正文（续写/重写/润色使用） */
   existingContent: string
+  /** 真相文件 2：角色矩阵当前状态（长篇一致性依据） */
+  characterStates: string
+  /** 真相文件 3：活跃伏笔 / 支线池 */
+  activeHooks: string
+  /** 真相文件 4：滚动的前情摘要链 */
+  recentSummaries: string
   targetWords: number
 }
 
@@ -87,8 +93,17 @@ function previousSection(c: ChapterPromptContext): string {
   return excerpt ? `【前情提要（上一章结尾）】\n${excerpt}` : ''
 }
 
+/** 真相文件段落：角色当前状态 / 活跃伏笔 / 前情摘要链（长篇一致性的依据） */
+function memorySection(c: ChapterPromptContext): string {
+  const rows: string[] = []
+  if (c.recentSummaries.trim()) rows.push(`【前情摘要链】\n${c.recentSummaries.trim()}`)
+  if (c.characterStates.trim()) rows.push(`【角色当前状态（必须遵守）】\n${c.characterStates.trim()}`)
+  if (c.activeHooks.trim()) rows.push(`【活跃伏笔 / 支线（本章可推进，不要写反）】\n${c.activeHooks.trim()}`)
+  return rows.join('\n\n')
+}
+
 function baseSections(c: ChapterPromptContext): string[] {
-  return [projectSection(c), outlineSection(c), briefSection(c), previousSection(c)].filter(Boolean)
+  return [projectSection(c), outlineSection(c), briefSection(c), memorySection(c), previousSection(c)].filter(Boolean)
 }
 
 function wrap(system: string, sections: string[]): ChatMessage[] {
@@ -339,6 +354,144 @@ export function buildBriefExpandMessages(input: BriefExpandPromptInput): ChatMes
           '}',
           '- 保留当前细纲中合理的内容，补齐缺失项，并让情节更具体可写',
           '- characters 给 2-5 个；sceneBeats 给 3-6 个，每个 30 字以内',
+          JSON_ONLY
+        ].join('\n')
+      ]
+        .filter(Boolean)
+        .join('\n\n')
+    }
+  ]
+}
+
+/* ============================ M3：审计与记忆回写 ============================ */
+
+const SYSTEM_REVIEWER = [
+  '你是一位极其严格的中文小说连续性审稿人，熟悉长篇连载的设定管理。',
+  '你只依据给定的资料判断，不臆测未给出的信息；对没有把握的问题宁可放过。',
+  '你只输出 JSON，绝不输出任何解释性文字。'
+].join('\n')
+
+const SYSTEM_EXTRACTOR = [
+  '你是一位负责维护长篇小说"真相文件"的记忆管理员。',
+  '你从本章正文中抽取可长期复用的事实：章节摘要、角色当前状态、世界状态增量、伏笔进展。',
+  '你只记录正文中明确写出的事实，不推测、不补充。',
+  '你只输出 JSON，绝不输出任何解释性文字。'
+].join('\n')
+
+export interface AuditPromptInput {
+  bookTitle: string
+  genre: string
+  worldbuilding: string
+  protagonist: string
+  chapterNo: number
+  chapterTitle: string
+  keyEvents: string
+  characters: string[]
+  /** 角色矩阵当前状态摘要（真相文件 2） */
+  characterStates: string
+  /** 待处理伏笔池摘要（真相文件 3） */
+  pendingHooks: string
+  /** 前一章摘要 */
+  previousSummary: string
+  content: string
+}
+
+/** 一致性审计（结构化 JSON，计划书 §12 `audit.consistency`） */
+export function buildAuditMessages(input: AuditPromptInput): ChatMessage[] {
+  return [
+    { role: 'system', content: SYSTEM_REVIEWER },
+    {
+      role: 'user',
+      content: [
+        `【任务】对照"真相文件"，对第 ${input.chapterNo} 章正文做一致性审计，只报告**明确可证实的矛盾**。`,
+        [row('书名', input.bookTitle), row('题材', input.genre), row('世界观', input.worldbuilding), row('主角', input.protagonist)]
+          .filter(Boolean)
+          .join('\n'),
+        row('本章标题', input.chapterTitle),
+        row('本章关键事件', input.keyEvents),
+        row('本章出场角色', input.characters.join('、')),
+        input.characterStates.trim() ? `【角色矩阵（当前状态）】\n${input.characterStates.trim()}` : '',
+        input.pendingHooks.trim() ? `【待处理伏笔池】\n${input.pendingHooks.trim()}` : '',
+        input.previousSummary.trim() ? `【前一章摘要】\n${input.previousSummary.trim()}` : '',
+        `【本章正文】\n${input.content.trim()}`,
+        [
+          '【审计维度】仅检查以下语义维度：',
+          '- OOC 出戏：角色言行与其性格 / 动机明显冲突',
+          '- 设定冲突：与世界观、角色能力或既有事实矛盾',
+          '- 时间线矛盾：时间推进前后不一致',
+          '- 伏笔断线：应回收的伏笔被无视或写反',
+          '- 称谓不一致：同一角色 / 事物被写成不同名字',
+          '【输出格式】输出一个 JSON 对象：',
+          '{',
+          '  "issues": [',
+          '    { "dimension": "OOC 出戏", "severity": "error", "detail": "问题描述", "evidence": "原文片段" }',
+          '  ]',
+          '}',
+          '- severity 取 info / warn / error；没有问题时 issues 返回空数组',
+          '- 每条 evidence 必须是正文中的原句片段，不得超过 40 字',
+          '- 宁缺毋滥：只报你有充分把握的矛盾',
+          JSON_ONLY
+        ].join('\n')
+      ]
+        .filter(Boolean)
+        .join('\n\n')
+    }
+  ]
+}
+
+export interface MemoryPromptInput {
+  bookTitle: string
+  genre: string
+  chapterNo: number
+  chapterTitle: string
+  characters: string[]
+  /** 上一章摘要，用于衔接 */
+  previousSummary: string
+  /** 角色矩阵当前状态摘要，用于增量更新 */
+  characterStates: string
+  /** 待处理伏笔池摘要 */
+  pendingHooks: string
+  content: string
+}
+
+/** 章节摘要 + 状态抽取（计划书 §12 `memory.summarize` / `memory.extract_state`） */
+export function buildMemoryMessages(input: MemoryPromptInput): ChatMessage[] {
+  return [
+    { role: 'system', content: SYSTEM_EXTRACTOR },
+    {
+      role: 'user',
+      content: [
+        `【任务】为第 ${input.chapterNo} 章正文建立记忆快照。`,
+        [row('书名', input.bookTitle), row('题材', input.genre), row('本章标题', input.chapterTitle)]
+          .filter(Boolean)
+          .join('\n'),
+        row('本章出场角色', input.characters.join('、')),
+        input.previousSummary.trim() ? `【上一章摘要】\n${input.previousSummary.trim()}` : '',
+        input.characterStates.trim() ? `【既有角色状态（用于增量更新）】\n${input.characterStates.trim()}` : '',
+        input.pendingHooks.trim() ? `【既有待处理伏笔】\n${input.pendingHooks.trim()}` : '',
+        `【本章正文】\n${input.content.trim()}`,
+        [
+          '【输出格式】输出一个 JSON 对象：',
+          '{',
+          '  "summary": "本章摘要，150 字以内，按发生顺序陈述关键事件与结果",',
+          '  "characterStates": [',
+          '    { "name": "角色名", "state": "身心/处境状态", "location": "当前所在地",',
+          '      "power": "能力或战力变化", "items": ["持有道具"], "recent": "最近行为，30 字以内" }',
+          '  ],',
+          '  "continuityFacts": {',
+          '    "worldState": "世界/局势当前状态的增量，80 字以内",',
+          '    "timeline": "本章发生的时间点或与上章的时间间隔，40 字以内",',
+          '    "resourceLedger": "资源/道具/数值的增减，60 字以内",',
+          '    "facts": ["本章新增的、后续必须遵守的硬事实，每条 30 字以内"]',
+          '  },',
+          '  "threadUpdates": [',
+          '    { "title": "伏笔或支线名称", "type": "plot|subplot|hook",',
+          '      "event": "planted|progressing|resolved|abandoned", "evidence": "依据，30 字以内" }',
+          '  ]',
+          '}',
+          '- characterStates 至少覆盖本章所有出场角色',
+          '- threadUpdates 记录本章埋下或推进的伏笔；没有则返回空数组',
+          '- 所有内容必须来自正文，不得虚构',
           JSON_ONLY
         ].join('\n')
       ]

@@ -1,5 +1,6 @@
 import type { ChapterBrief, ChapterDraft, Project } from '@shared/types'
 import { getProject, listBriefs, listDrafts } from '../db/repositories'
+import { buildTruthSnapshot } from '../engine/truth'
 import type { ChapterPromptContext } from '../prompts/zh-CN'
 
 const PREVIOUS_EXCERPT_CHARS = 800
@@ -33,6 +34,8 @@ export function buildChapterContext(projectId: number, chapterNo: number): Chapt
   const drafts = listDrafts(projectId)
   const latestDraft = drafts.find((item) => item.chapterNo === chapterNo) ?? null
   const previousDraft = drafts.find((item) => item.chapterNo === chapterNo - 1) ?? null
+  // 真相文件快照（只含本章之前已落盘的记忆），为长篇一致性提供依据
+  const memory = buildTruthSnapshot(projectId, chapterNo)
 
   return {
     project,
@@ -59,6 +62,9 @@ export function buildChapterContext(projectId: number, chapterNo: number): Chapt
       userGuidance: brief?.userGuidance ?? '',
       previousExcerpt: previousDraft ? tailExcerpt(previousDraft.content, PREVIOUS_EXCERPT_CHARS) : '',
       existingContent: latestDraft?.content ?? '',
+      characterStates: memory.characterStates,
+      activeHooks: memory.pendingHooks,
+      recentSummaries: memory.recentSummaries,
       targetWords: project.wordsPerChapter
     }
   }

@@ -29,9 +29,21 @@
 - **RoleRouter**：5 个创作角色（架构 / 写作 / 审稿 / 抽取 / 向量）分别映射到「端点 + 模型」，支持 fallback 链与并发上限
 - **用量记账**：每次调用写入 `llm_call`（tokens / 耗时 / 成功失败），设置页有仪表盘
 - **官方预设**：OpenAI / DeepSeek / Kimi / 通义 / 智谱 / Gemini / Ollama 一键填充
-- **方式 B · MCP Server**：本机 stdio MCP，6 个工具，外部 Agent 用自身免费额度驱动整本创作
-- **方式 C · 自定义反代**：自定义请求头 + 严格限速 + 风险确认（未确认不允许保存）
+- **方式 B · MCP Server**：本机 stdio MCP，7 个工具，外部 Agent 用自身免费额度驱动整本创作
+- **自定义端点**：除官方预设外，也可接入任意 OpenAI 兼容的第三方端点（默认关闭，需在设置中手动开启）
 - **任务单桥**：导出 `chapter_0001.task.md`（含完整提示词），把产出的正文粘回即可落盘
+
+**M3 · 全自动整本 + 一致性记忆 —— 已完成**
+
+- **连写队列**：从任意一章起「连写整本」，逐章跑「装配 → 起草 → 审计 → 记忆」四步状态机
+- **断点恢复**：每章每步进度落库 `pipeline_step`；中途停止或崩溃后点「继续连写」即可从断点续跑，已完成步骤自动复用
+- **Steer 实时干预**：运行中注入「本章要求 / 禁止项」，对后续章节生效；同时支持暂停、跳过当前章
+- **逐章验收开关**：可选「每章生成后暂停」，人工决定「通过，继续」或「重写本章」
+- **七个真相文件**：世界状态 / 角色矩阵 / 待处理伏笔 / 章节摘要链 / 支线板 / 时间线 / 资源账本；写作前自动装配进上下文，为长篇一致性兜底
+- **记忆回写**：每章落盘后由抽取角色生成摘要、角色状态与伏笔进展，投影到角色矩阵与伏笔台账（支持一键从正文重建）
+- **精简审计（13 项确定性维度 + 模型语义审计）**：字数 / Markdown / 标题行 / AI 腔 / 角色覆盖 / 关键事件 / 钩子呼应 / 段落节奏 / 重复句 / 与上章重复 / 口头禅密度 / 收尾段 / 标点规范，另叠加 OOC、设定冲突、时间线、伏笔断线、称谓一致性等语义维度
+- **记忆面板**：工作区新增「记忆」Tab，可视化七个真相文件与逐章审计报告
+- **MCP 同步增强**：`inkwell_next_task` 的上下文自动带上真相文件，新增 `inkwell_memory` 工具，`inkwell_save_draft` 落盘后顺带回写记忆
 
 ## 技术栈
 
@@ -54,6 +66,7 @@ npm run build        # 构建到 out/
 npm run smoke        # 构建并跑一次持久化自检
 npm run smoke:llm    # 构建并跑一次「细纲 → 流式生成 → 落盘」端到端自检（本地假端点，无需 API Key）
 npm run smoke:mcp    # 构建并以真实 MCP 协议拉起 MCP Server，模拟 Agent 自动写完 5 章
+npm run smoke:m3     # 构建并跑一次 M3 端到端自检（连写整本 / 记忆回写 / 断点续跑 / Steer）
 ```
 
 > **国内网络**：若 `npm install` 后 Electron 二进制下载失败，先设置镜像再重试：
@@ -88,18 +101,30 @@ npx electron . --smoke-mcp
 #   status → next_task → save_draft ×5，并校验落盘与进度推进 → MCP_PIPELINE_OK
 ```
 
+### 连写与记忆自检
+
+```powershell
+npx electron . --smoke-m3
+# 起一个本地假端点，跑：向导出细纲 → 连写整本（装配/起草/审计/记忆）
+#   → 校验七个真相文件与角色/伏笔投影 → 中途中断 → 从断点续跑写完全本
+#   全部通过时输出 M3_PIPELINE_OK
+```
+
 ### 上手流程
 
 1. 书架右上「设置」→「官方 API」填 Base URL / 模型名 / API Key →「测试连接」→「保存」
 2. 书架新建项目：**填了一句话灵感就会自动生成设定、大纲与全部章节细纲**
 3. 工作区「细纲」Tab 可逐章微调，也能点「AI 补全本章细纲」
 4. 切到「正文」Tab → 点「生成正文」；不满意可「重写」，写短了可「续写」，文字毛糙可「润色」
+5. 想整本自动写：点顶栏「从第 N 章连写整本」；运行中可「暂停 / 跳过本章 / 停止」，也能下发 Steer 要求
+6. 「记忆」Tab 查看七个真相文件与每章审计报告；误删了记忆可点「从正文重建记忆」
 
 #### 用外部 Agent 零成本跑完整本
 
 1. 先执行一次 `npm run build` 生成 `out/main/mcp.js`
 2. 在设置页「Agent 模式（MCP）」复制给出的 `mcpServers` 配置，粘贴到 Agent（TRAE WorkBuddy / Claude Code / Cursor）的 MCP 配置里
 3. 让 Agent 循环调用 `inkwell_next_task` → 生成 → `inkwell_save_draft`，直到 `done: true`
+4. 需要用既有设定时，可先调 `inkwell_memory` 读取七个真相文件，避免前后矛盾
 
 ## 目录结构
 
@@ -110,7 +135,9 @@ src/
 │  ├─ smoke.ts           # --smoke 持久化自检
 │  ├─ smoke-llm.ts       # --smoke-llm 生成链路自检
 │  ├─ smoke-mcp.ts       # --smoke-mcp MCP 协议自检
-│  ├─ db/                # schema / migrations / client / repositories
+│  ├─ smoke-m3.ts        # --smoke-m3 连写/记忆/断点续跑自检
+│  ├─ db/                # schema / migrations / client / repositories / memory / pipeline
+│  ├─ engine/            # 确定性引擎：truth(真相文件) / audit(审计) / memory(回写) / pipeline / run(连写队列)
 │  ├─ providers/         # ChatProvider 抽象 + OpenAI 兼容实现 + 接入配置
 │  ├─ llm/               # invoke(路由+记账) / route / usage / context / generate / wizard / brief
 │  ├─ mcp/               # MCP Server（stdio）入口与工具实现
@@ -121,7 +148,7 @@ src/
 ├─ preload/              # contextBridge 白名单 API
 ├─ renderer/src/
 │  ├─ pages/             # 书架 / 工作区 / 设置
-│  ├─ components/        # 章节导航 / 细纲 / 大纲 / 正文 / 设置各面板
+│  ├─ components/        # 章节导航 / 细纲 / 大纲 / 正文 / 记忆 / 连写控制条 / 设置各面板
 │  └─ stores/            # zustand
 └─ shared/               # 跨进程共享的类型与 IPC 契约
 scripts/                 # Git 每轮提交与安全回滚脚本

@@ -9,6 +9,9 @@ import {
   saveBrief,
   saveDraft
 } from '../db/repositories'
+import { getTruthFiles } from '../engine/truth'
+import { deterministicAudit } from '../engine/audit'
+import { commitMemory } from '../engine/memory'
 import { buildChapterContext } from '../llm/context'
 import { buildBriefExpandMessages, buildMessagesFor } from '../prompts/zh-CN'
 
@@ -54,48 +57,13 @@ function firstUnwrittenChapter(project: Project, written: Set<number>): number |
   return null
 }
 
-/** 轻量确定性审稿（不含模型调用）：M3/M4 会替换为完整的多维审计 */
-function reviewChapter(project: Project, brief: ChapterBrief | null, content: string): Array<{
-  check: string
-  passed: boolean
-  detail: string
-}> {
-  const plain = content.replace(/\s/g, '')
-  const target = project.wordsPerChapter
-  const lengthOk = plain.length >= target * 0.7 && plain.length <= target * 1.3
-  const markdownLike = /(^|\n)\s*#{1,6}\s|(^|\n)\s*[-*]\s|\*\*/.test(content)
-  const hasTitleLine = /(^|\n)\s*第\s*[0-9一二三四五六七八九十]+\s*章/.test(content)
-  const aiPhrases = ['总而言之', '综上所述', '值得注意的是', '在这个', '不得不提的是', '让我们']
-  const hitPhrases = aiPhrases.filter((phrase) => content.includes(phrase))
-  const missingCharacters = (brief?.characters ?? []).filter((name) => name && !content.includes(name))
-
-  return [
-    {
-      check: '字数接近目标',
-      passed: lengthOk,
-      detail: `当前 ${plain.length} 字，目标 ${target} 字（允许 ±30%）`
-    },
-    {
-      check: '不含 Markdown 标记',
-      passed: !markdownLike,
-      detail: markdownLike ? '疑似包含 # / 列表 / 加粗等标记' : '未发现 Markdown 标记'
-    },
-    {
-      check: '不含章节标题行',
-      passed: !hasTitleLine,
-      detail: hasTitleLine ? '正文里出现了「第 N 章」标题行，应只保留正文' : '未发现标题行'
-    },
-    {
-      check: '无明显 AI 腔套话',
-      passed: hitPhrases.length === 0,
-      detail: hitPhrases.length ? `命中：${hitPhrases.join('、')}` : '未命中内置套话表'
-    },
-    {
-      check: '细纲角色均已出场',
-      passed: missingCharacters.length === 0,
-      detail: missingCharacters.length ? `未出现：${missingCharacters.join('、')}` : '细纲角色全部出现'
-    }
-  ]
+/** 轻量确定性审稿（不含模型调用）：复用引擎的 13 个确定性审计维度 */
+function reviewChapter(project: Project, brief: ChapterBrief | null, content: string, previousContent: string) {
+  return deterministicAudit(project, brief, content, previousContent).map((check) => ({
+    check: check.dimension,
+    passed: check.passed,
+    detail: check.detail
+  }))
 }
 
 /** 组装 Inkwell 的 MCP Server（stdio），供外部 Agent 驱动整本创作 */
@@ -265,7 +233,9 @@ export function createInkwellMcpServer(): McpServer {
     'inkwell_save_draft',
     {
       title: '回填章节正文',
-      description: '把写好的章节正文落盘为新版本（纯文本，不要带章节标题与 Markdown）。',
+      description:
+        '把写好的章节正文落盘为新版本（纯文本，不要带章节标题与 Markdown）。' +
+        '若本机已配置抽取模型，会顺带回写本章记忆（摘要 / 角色状态 / 伏笔台账）。',
       inputSchema: {
         projectId: z.number().int().positive(),
         chapterNo: z.number().int().min(1),
@@ -273,7 +243,8 @@ export function createInkwellMcpServer(): McpServer {
       }
     },
     async ({ projectId, chapterNo, text: content }) => {
-      if (!getProject(projectId)) return fail(`项目 ${projectId} 不存在`)
+      const project = getProject(projectId)
+      if (!project) return fail(`项目 ${projectId} 不存在`)
 
       const versions = listDrafts(projectId).filter((item) => item.chapterNo === chapterNo)
       const saved = saveDraft({
@@ -284,7 +255,66 @@ export function createInkwellMcpServer(): McpServer {
         source: 'write',
         content
       })
-      return text(JSON.stringify({ ok: true, chapterNo, version: saved.version, wordCount: saved.wordCount }, null, 2))
+
+      // 记忆回写是增强项：没有可用的 extractor 端点时静默跳过，不影响落盘
+      let memoryCommitted = false
+      try {
+        const brief = listBriefs(projectId).find((item) => item.chapterNo === chapterNo) ?? null
+        await commitMemory({
+          project,
+          chapterNo,
+          chapterTitle: brief?.title ?? '',
+          characters: brief?.characters ?? [],
+          draft: saved
+        })
+        memoryCommitted = true
+      } catch {
+        memoryCommitted = false
+      }
+
+      return text(
+        JSON.stringify(
+          { ok: true, chapterNo, version: saved.version, wordCount: saved.wordCount, memoryCommitted },
+          null,
+          2
+        )
+      )
+    }
+  )
+
+  server.registerTool(
+    'inkwell_memory',
+    {
+      title: '读取真相文件',
+      description:
+        '返回项目的七个真相文件（世界状态 / 角色矩阵 / 待处理伏笔 / 章节摘要链 / 支线板 / 时间线 / 资源账本），' +
+        '供 Agent 在写作前了解既有设定，避免前后矛盾。',
+      inputSchema: { projectId: z.number().int().positive().optional() }
+    },
+    async ({ projectId }) => {
+      const project = selectProject(projectId)
+      if (!project) return fail('找不到项目，请先在 Inkwell 中创建')
+
+      const truth = getTruthFiles(project.id)
+      const payload = {
+        projectId: project.id,
+        name: project.name,
+        worldState: truth.worldState,
+        characterMatrix: truth.characterMatrix.map((item) => ({
+          name: item.name,
+          state: item.csState,
+          location: item.csLocation,
+          power: item.csPower,
+          recent: item.csRecent,
+          updatedChapter: item.csUpdatedCh
+        })),
+        pendingHooks: truth.pendingHooks.map((item) => ({ title: item.title, type: item.type, status: item.status })),
+        chapterSummaries: truth.chapterSummaries,
+        subplotBoard: truth.subplotBoard.map((item) => ({ title: item.title, status: item.status })),
+        timeline: truth.timeline,
+        resourceLedger: truth.resourceLedger
+      }
+      return text(JSON.stringify(payload, null, 2))
     }
   )
 
@@ -292,7 +322,9 @@ export function createInkwellMcpServer(): McpServer {
     'inkwell_review',
     {
       title: '章节自检',
-      description: '对某章正文做轻量确定性检查（字数 / Markdown 残留 / 标题行 / AI 腔套话 / 细纲角色覆盖）。',
+      description:
+        '对某章正文做 13 项确定性审计（字数 / Markdown / 标题行 / AI 腔 / 角色覆盖 / 关键事件 / 钩子 / ' +
+        '段落节奏 / 重复句 / 与上章重复 / 口头禅密度 / 收尾段 / 标点规范）。',
       inputSchema: {
         projectId: z.number().int().positive(),
         chapterNo: z.number().int().min(1),
@@ -306,10 +338,16 @@ export function createInkwellMcpServer(): McpServer {
       const content = provided ?? bundle.latestDraft?.content ?? ''
       if (!content.trim()) return fail('没有可检查的正文：请先传入 text 或先生成本章')
 
-      const checks = reviewChapter(bundle.project, bundle.brief, content)
+      const previous = listDrafts(projectId).find((item) => item.chapterNo === chapterNo - 1)?.content ?? ''
+      const checks = reviewChapter(bundle.project, bundle.brief, content, previous)
       return text(
         JSON.stringify(
-          { chapterNo, passed: checks.every((item) => item.passed), checks },
+          {
+            chapterNo,
+            passed: checks.every((item) => item.passed),
+            dimensions: checks.length,
+            checks
+          },
           null,
           2
         )

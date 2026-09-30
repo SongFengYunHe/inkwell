@@ -98,9 +98,10 @@ export async function runSmokeMcp(): Promise<void> {
       'inkwell_get_context',
       'inkwell_save_brief',
       'inkwell_save_draft',
+      'inkwell_memory',
       'inkwell_review'
     ]
-    checks.push(['六个工具均已暴露', expectedTools.every((name) => toolNames.includes(name))])
+    checks.push(['全部工具均已暴露', expectedTools.every((name) => toolNames.includes(name))])
 
     const caller = client as unknown as ToolCaller
 

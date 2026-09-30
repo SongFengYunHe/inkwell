@@ -12,6 +12,7 @@ export default function App() {
   const loadProjects = useAppStore((s) => s.loadProjects)
   const handleGenerateEvent = useAppStore((s) => s.handleGenerateEvent)
   const handleWizardEvent = useAppStore((s) => s.handleWizardEvent)
+  const handlePipelineEvent = useAppStore((s) => s.handlePipelineEvent)
 
   useEffect(() => {
     void loadProjects()
@@ -25,6 +26,10 @@ export default function App() {
   useEffect(() => {
     return window.inkwell.wizard.onEvent(handleWizardEvent)
   }, [handleWizardEvent])
+
+  useEffect(() => {
+    return window.inkwell.pipeline.onEvent(handlePipelineEvent)
+  }, [handlePipelineEvent])
 
   const page =
     view === 'settings' ? (

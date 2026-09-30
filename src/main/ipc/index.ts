@@ -2,10 +2,13 @@ import {
   IpcChannel,
   briefExpandSchema,
   briefSaveSchema,
+  chapterQuerySchema,
   draftSaveSchema,
   exportTaskSchema,
   generateStartSchema,
   idSchema,
+  pipelineStartSchema,
+  pipelineSteerSchema,
   projectCreateSchema,
   projectIdSchema,
   projectUpdateSchema,
@@ -15,11 +18,25 @@ import {
   wizardStartSchema
 } from '@shared/ipc'
 import { join } from 'node:path'
-import type { GenerateEvent, WizardEvent } from '@shared/types'
+import type { GenerateEvent, PipelineEvent, PipelineRun, WizardEvent } from '@shared/types'
 import { app, ipcMain, type WebContents } from 'electron'
 import { exportChapterTask } from '../bridge/task-slip'
 import { getDatabasePath } from '../db/client'
 import * as repo from '../db/repositories'
+import { getLatestReview } from '../db/memory-repo'
+import { createRun, latestRun, updateRun } from '../db/pipeline-repo'
+import { getTruthFiles } from '../engine/truth'
+import { rebuildMemory } from '../engine/pipeline'
+import {
+  abortPipeline,
+  acceptPipeline,
+  getControlRunId,
+  pausePipeline,
+  rejectPipeline,
+  runPipeline,
+  skipPipeline,
+  steerPipeline
+} from '../engine/run'
 import { expandBrief } from '../llm/brief'
 import { runGeneration } from '../llm/generate'
 import { deleteRoute, listRoutes, saveRoute } from '../llm/route'
@@ -193,6 +210,90 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IpcChannel.wizardAbort, (_event, requestId: unknown) => {
     activeJobs.get(requestIdSchema.parse(requestId))?.abort()
+  })
+
+  /* ------------------------------ M3 记忆面板 ------------------------------ */
+  ipcMain.handle(IpcChannel.memoryTruthFiles, (_event, projectId: unknown) =>
+    getTruthFiles(projectIdSchema.parse(projectId))
+  )
+  ipcMain.handle(IpcChannel.memoryLatestAudit, (_event, raw: unknown) => {
+    const input = chapterQuerySchema.parse(raw)
+    return getLatestReview(input.projectId, input.chapterNo)
+  })
+  ipcMain.handle(IpcChannel.memoryRebuild, (_event, projectId: unknown) =>
+    rebuildMemory(projectIdSchema.parse(projectId))
+  )
+
+  /* ------------------------------ M3 连写队列 ------------------------------ */
+  ipcMain.handle(IpcChannel.pipelineLatest, (_event, projectId: unknown) =>
+    latestRun(projectIdSchema.parse(projectId))
+  )
+
+  /** 把一个 run 交给连写驱动；控制器按 requestId 索引，供暂停 / Steer / 验收指令寻址 */
+  const launchPipeline = (sender: WebContents, requestId: string, run: PipelineRun): void => {
+    const send = (payload: PipelineEvent): void => emit<PipelineEvent>(sender, IpcChannel.pipelineEvent, payload)
+    void runPipeline({ requestId, run, useModelAudit: true, emit: send }).catch((error: unknown) => {
+      send({
+        requestId,
+        type: 'error',
+        run: null,
+        message: error instanceof Error ? error.message : String(error)
+      })
+    })
+  }
+
+  ipcMain.handle(IpcChannel.pipelineStart, (event, raw: unknown) => {
+    const input = pipelineStartSchema.parse(raw)
+    if (activeJobs.has(input.requestId)) throw new Error('重复的连写请求标识')
+
+    const project = repo.getProject(input.projectId)
+    if (!project) throw new Error(`项目不存在：${input.projectId}`)
+
+    const briefs = repo.listBriefs(input.projectId)
+    if (briefs.length === 0) throw new Error('还没有任何细纲，请先生成细纲再连写')
+
+    const fromCh = Math.max(1, input.fromCh ?? 1)
+    const toCh = Math.min(input.toCh ?? project.totalChapters, project.totalChapters)
+    if (fromCh > toCh) throw new Error('起始章号不能大于结束章号')
+
+    const run = createRun({ projectId: input.projectId, fromCh, toCh, requireAccept: input.requireAccept ?? false })
+    launchPipeline(event.sender, input.requestId, run)
+  })
+
+  ipcMain.handle(IpcChannel.pipelineResume, (event, raw: unknown) => {
+    const input = pipelineSteerSchema.pick({ requestId: true }).extend({ projectId: projectIdSchema }).parse(raw)
+    if (activeJobs.has(input.requestId)) throw new Error('重复的连写请求标识')
+
+    const run = latestRun(input.projectId)
+    if (!run) throw new Error('没有可继续的连写任务')
+    if (run.status === 'running') throw new Error('连写任务正在进行中')
+    if (run.status === 'done') throw new Error('该连写任务已全部完成')
+
+    const resumed = updateRun(run.id, { status: 'running', error: '' })
+    launchPipeline(event.sender, input.requestId, resumed)
+  })
+
+  ipcMain.handle(IpcChannel.pipelinePause, (_event, requestId: unknown) => {
+    pausePipeline(requestIdSchema.parse(requestId))
+  })
+  ipcMain.handle(IpcChannel.pipelineAbort, (_event, requestId: unknown) => {
+    abortPipeline(requestIdSchema.parse(requestId))
+  })
+  ipcMain.handle(IpcChannel.pipelineSkip, (_event, requestId: unknown) => {
+    skipPipeline(requestIdSchema.parse(requestId))
+  })
+  ipcMain.handle(IpcChannel.pipelineAccept, (_event, requestId: unknown) => {
+    acceptPipeline(requestIdSchema.parse(requestId))
+  })
+  ipcMain.handle(IpcChannel.pipelineReject, (_event, requestId: unknown) => {
+    rejectPipeline(requestIdSchema.parse(requestId))
+  })
+  ipcMain.handle(IpcChannel.pipelineSteer, (_event, raw: unknown) => {
+    const input = pipelineSteerSchema.parse(raw)
+    steerPipeline(input.requestId, input.guidance)
+    // 落库：暂停 / 崩溃后续跑时 Steer 仍然生效
+    const runId = getControlRunId(input.requestId)
+    if (runId !== null) updateRun(runId, { steerGuidance: input.guidance })
   })
 
   ipcMain.handle(IpcChannel.appDbPath, () => getDatabasePath())

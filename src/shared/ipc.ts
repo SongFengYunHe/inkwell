@@ -31,6 +31,22 @@ export const IpcChannel = {
   wizardAbort: 'wizard:abort',
   /** 主进程 → 渲染进程的向导进度推送通道 */
   wizardEvent: 'wizard:event',
+  /** M3：记忆面板（七个真相文件 / 审计报告 / 投影重建） */
+  memoryTruthFiles: 'memory:truth-files',
+  memoryLatestAudit: 'memory:latest-audit',
+  memoryRebuild: 'memory:rebuild',
+  /** M3：连写队列 */
+  pipelineStart: 'pipeline:start',
+  pipelineAbort: 'pipeline:abort',
+  pipelinePause: 'pipeline:pause',
+  pipelineResume: 'pipeline:resume',
+  pipelineSteer: 'pipeline:steer',
+  pipelineSkip: 'pipeline:skip',
+  pipelineAccept: 'pipeline:accept',
+  pipelineReject: 'pipeline:reject',
+  pipelineLatest: 'pipeline:latest',
+  /** 主进程 → 渲染进程的连写进度推送通道 */
+  pipelineEvent: 'pipeline:event',
   appDbPath: 'app:db-path',
   appMcpEntry: 'app:mcp-entry'
 } as const
@@ -148,4 +164,25 @@ export const briefExpandSchema = z.object({
     sceneBeats: z.array(z.string().max(2_000)).max(200),
     suspenseHook: z.string().max(2_000)
   })
+})
+
+/* ============================ M3：连写队列 ============================ */
+
+export const pipelineStartSchema = z.object({
+  requestId: requestIdSchema,
+  projectId: projectIdSchema,
+  fromCh: z.number().int().min(1).max(99_999).optional(),
+  toCh: z.number().int().min(1).max(99_999).optional(),
+  requireAccept: z.boolean().optional()
+})
+
+export const pipelineSteerSchema = z.object({
+  requestId: requestIdSchema,
+  guidance: z.string().max(4_000)
+})
+
+/** 章节定位查询（记忆面板读取单章审计报告等） */
+export const chapterQuerySchema = z.object({
+  projectId: projectIdSchema,
+  chapterNo: z.number().int().min(1).max(99_999)
 })

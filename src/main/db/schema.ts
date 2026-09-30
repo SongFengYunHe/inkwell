@@ -1,4 +1,5 @@
 import { sqliteTable, integer, text, index, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import type { AuditReport, CharacterStateDelta, ContinuityFacts, ThreadUpdate } from '@shared/types'
 
 /**
  * Drizzle schema —— 应用层的类型来源（供仓库层做类型安全查询）。
@@ -134,6 +135,171 @@ export const llmCall = sqliteTable(
     createdAt: integer('created_at').notNull()
   },
   (t) => [index('llm_call_created_idx').on(t.createdAt), index('llm_call_role_idx').on(t.role)]
+)
+
+/** 章节记忆快照（真相文件 chapter_summaries / world_state 载体） */
+export const memoryChapter = sqliteTable(
+  'memory_chapter',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    chapterNo: integer('chapter_no').notNull(),
+    draftId: integer('draft_id'),
+    summary: text('summary').notNull().default(''),
+    /** Array<{ name, state, location, power, items: string[], recent }> */
+    characterStates: text('character_states', { mode: 'json' })
+      .$type<CharacterStateDelta[]>()
+      .notNull()
+      .default([]),
+    /** { worldState, timeline, resourceLedger, facts: string[] } */
+    continuityFacts: text('continuity_facts', { mode: 'json' })
+      .$type<ContinuityFacts>()
+      .notNull()
+      .default({ worldState: '', timeline: '', resourceLedger: '', facts: [] }),
+    /** Array<{ title, type, event, evidence }> */
+    threadUpdates: text('thread_updates', { mode: 'json' })
+      .$type<ThreadUpdate[]>()
+      .notNull()
+      .default([]),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (t) => [uniqueIndex('memory_chapter_project_chapter_uq').on(t.projectId, t.chapterNo)]
+)
+
+/** 角色卡 + 当前状态（真相文件 character_matrix 载体） */
+export const character = sqliteTable(
+  'character',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    role: text('role').notNull().default(''),
+    appearance: text('appearance').notNull().default(''),
+    personality: text('personality').notNull().default(''),
+    background: text('background').notNull().default(''),
+    abilities: text('abilities').notNull().default(''),
+    motivation: text('motivation').notNull().default(''),
+    relationships: text('relationships').notNull().default(''),
+    csLocation: text('cs_location').notNull().default(''),
+    csPower: text('cs_power').notNull().default(''),
+    csState: text('cs_state').notNull().default(''),
+    csItems: text('cs_items', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    csRecent: text('cs_recent').notNull().default(''),
+    csUpdatedCh: integer('cs_updated_ch').notNull().default(0),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (t) => [uniqueIndex('character_project_name_uq').on(t.projectId, t.name)]
+)
+
+/** 主线/支线/伏笔台账（真相文件 pending_hooks / subplot_board 载体） */
+export const outlineThread = sqliteTable(
+  'outline_thread',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    /** plot | subplot | hook */
+    type: text('type').notNull().default('plot'),
+    startCh: integer('start_ch').notNull().default(0),
+    endCh: integer('end_ch').notNull().default(0),
+    intent: text('intent').notNull().default(''),
+    /** planned | active | resolved | abandoned */
+    status: text('status').notNull().default('planned'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (t) => [uniqueIndex('outline_thread_project_title_uq').on(t.projectId, t.title)]
+)
+
+/** 伏笔状态变更记录 */
+export const threadEvent = sqliteTable(
+  'thread_event',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    threadId: integer('thread_id')
+      .notNull()
+      .references(() => outlineThread.id, { onDelete: 'cascade' }),
+    chapterNo: integer('chapter_no').notNull().default(0),
+    draftId: integer('draft_id'),
+    /** planted | progressing | resolved | abandoned */
+    event: text('event').notNull().default('progressing'),
+    evidence: text('evidence').notNull().default(''),
+    createdAt: integer('created_at').notNull()
+  },
+  (t) => [index('thread_event_thread_idx').on(t.threadId)]
+)
+
+/** 审稿报告（多维审计结果） */
+export const review = sqliteTable(
+  'review',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    draftId: integer('draft_id'),
+    chapterNo: integer('chapter_no').notNull(),
+    idx: integer('idx').notNull().default(1),
+    /** AuditReport 序列化 */
+    content: text('content', { mode: 'json' })
+      .$type<AuditReport>()
+      .notNull()
+      .default({ chapterNo: 0, passed: true, score: 0, checks: [], modelAssisted: false, createdAt: 0 }),
+    createdAt: integer('created_at').notNull()
+  },
+  (t) => [index('review_project_chapter_idx').on(t.projectId, t.chapterNo)]
+)
+
+/** 连写任务 */
+export const pipelineRun = sqliteTable(
+  'pipeline_run',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    fromCh: integer('from_ch').notNull(),
+    toCh: integer('to_ch').notNull(),
+    /** running | paused | awaiting_accept | done | failed | aborted | interrupted */
+    status: text('status').notNull().default('running'),
+    cursor: integer('cursor').notNull().default(1),
+    requireAccept: integer('require_accept', { mode: 'boolean' }).notNull().default(false),
+    steerGuidance: text('steer_guidance').notNull().default(''),
+    error: text('error').notNull().default(''),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (t) => [index('pipeline_run_project_idx').on(t.projectId)]
+)
+
+/** 步骤级进度（断点恢复） */
+export const pipelineStep = sqliteTable(
+  'pipeline_step',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    runId: integer('run_id')
+      .notNull()
+      .references(() => pipelineRun.id, { onDelete: 'cascade' }),
+    chapterNo: integer('chapter_no').notNull(),
+    /** assemble | draft | audit | memory | skip */
+    step: text('step').notNull(),
+    ok: integer('ok', { mode: 'boolean' }).notNull().default(false),
+    attempt: integer('attempt').notNull().default(1),
+    error: text('error').notNull().default(''),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (t) => [uniqueIndex('pipeline_step_run_chapter_step_uq').on(t.runId, t.chapterNo, t.step)]
 )
 
 /** 迁移版本表（schema_version 驱动迁移） */

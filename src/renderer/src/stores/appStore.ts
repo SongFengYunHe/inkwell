@@ -19,7 +19,11 @@ import type {
   LlmRoleName,
   RoleRoute,
   RoleRouteSaveInput,
-  UsageSummary
+  UsageSummary,
+  AuditReport,
+  PipelineEvent,
+  PipelineRun,
+  TruthFiles
 } from '@shared/types'
 import { create } from 'zustand'
 
@@ -34,6 +38,12 @@ interface GeneratingState {
 interface WizardState {
   requestId: string
   progress: WizardProgress | null
+}
+
+interface PipelineState {
+  requestId: string
+  run: PipelineRun | null
+  message: string
 }
 
 interface AppState {
@@ -57,6 +67,16 @@ interface AppState {
 
   wizard: WizardState | null
   wizardNotice: string | null
+
+  /** M3：连写队列运行时状态 */
+  pipeline: PipelineState | null
+  pipelineNotice: string | null
+  /** M3：项目最近一次连写任务（用于「继续连写」） */
+  lastRun: PipelineRun | null
+  /** M3：七个真相文件 */
+  truth: TruthFiles | null
+  /** M3：当前章最新审计报告 */
+  audit: AuditReport | null
 
   setView: (view: View) => void
   clearError: () => void
@@ -100,6 +120,23 @@ interface AppState {
   abortWizard: () => Promise<void>
   handleWizardEvent: (event: WizardEvent) => void
   clearWizardNotice: () => void
+
+  /* ------------------------------ M3：连写与记忆 ------------------------------ */
+  startPipeline: (options?: { fromCh?: number; toCh?: number; requireAccept?: boolean }) => Promise<void>
+  resumePipeline: () => Promise<void>
+  pausePipeline: () => Promise<void>
+  abortPipeline: () => Promise<void>
+  skipPipeline: () => Promise<void>
+  acceptPipeline: () => Promise<void>
+  rejectPipeline: () => Promise<void>
+  steerPipeline: (guidance: string) => Promise<void>
+  handlePipelineEvent: (event: PipelineEvent) => void
+  clearPipelineNotice: () => void
+  loadLastRun: () => Promise<void>
+
+  loadTruthFiles: () => Promise<void>
+  loadLatestAudit: (chapterNo: number) => Promise<void>
+  rebuildMemory: () => Promise<void>
 }
 
 /** 统一收敛错误信息，避免每个动作各写一遍 try/catch */
@@ -137,6 +174,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   notice: null,
   wizard: null,
   wizardNotice: null,
+  pipeline: null,
+  pipelineNotice: null,
+  lastRun: null,
+  truth: null,
+  audit: null,
 
   setView: (view) => set({ view }),
   clearError: () => set({ error: null }),
@@ -163,8 +205,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   openProject: async (id) => {
-    set({ view: 'workspace', activeProjectId: id, currentChapterNo: 1, streamText: '', notice: null, wizardNotice: null })
+    set({
+      view: 'workspace',
+      activeProjectId: id,
+      currentChapterNo: 1,
+      streamText: '',
+      notice: null,
+      wizardNotice: null,
+      pipelineNotice: null,
+      truth: null,
+      audit: null
+    })
     await Promise.all([get().reloadBriefs(), get().reloadDrafts()])
+    void get().loadLastRun()
+    void get().loadTruthFiles()
+    void get().loadLatestAudit(1)
   },
 
   backToBookshelf: () => set({ view: 'bookshelf', streamText: '', notice: null }),
@@ -202,7 +257,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().reloadDrafts()
   },
 
-  setCurrentChapter: (chapterNo) => set({ currentChapterNo: chapterNo }),
+  setCurrentChapter: (chapterNo) => {
+    set({ currentChapterNo: chapterNo })
+    void get().loadLatestAudit(chapterNo)
+  },
 
   reloadBriefs: async () => {
     const projectId = get().activeProjectId
@@ -384,5 +442,160 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ wizard: null, error: event.message })
   },
 
-  clearWizardNotice: () => set({ wizardNotice: null })
+  clearWizardNotice: () => set({ wizardNotice: null }),
+
+  /* ------------------------------ M3：连写与记忆 ------------------------------ */
+
+  startPipeline: async (options) => {
+    const projectId = get().activeProjectId
+    if (projectId === null || get().pipeline) return
+    const requestId = makeRequestId()
+    set({
+      pipeline: { requestId, run: null, message: '正在启动连写…' },
+      pipelineNotice: null,
+      error: null
+    })
+    try {
+      await window.inkwell.pipeline.start({ requestId, projectId, ...options })
+    } catch (err) {
+      set({ pipeline: null, error: err instanceof Error ? err.message : String(err) })
+    }
+  },
+
+  resumePipeline: async () => {
+    const projectId = get().activeProjectId
+    if (projectId === null || get().pipeline) return
+    const requestId = makeRequestId()
+    set({ pipeline: { requestId, run: null, message: '正在从断点继续…' }, pipelineNotice: null, error: null })
+    try {
+      await window.inkwell.pipeline.resume(requestId, projectId)
+    } catch (err) {
+      set({ pipeline: null, error: err instanceof Error ? err.message : String(err) })
+    }
+  },
+
+  pausePipeline: async () => {
+    const pipeline = get().pipeline
+    if (!pipeline) return
+    await window.inkwell.pipeline.pause(pipeline.requestId)
+  },
+
+  abortPipeline: async () => {
+    const pipeline = get().pipeline
+    if (!pipeline) return
+    await window.inkwell.pipeline.abort(pipeline.requestId)
+  },
+
+  skipPipeline: async () => {
+    const pipeline = get().pipeline
+    if (!pipeline) return
+    await window.inkwell.pipeline.skip(pipeline.requestId)
+  },
+
+  acceptPipeline: async () => {
+    const pipeline = get().pipeline
+    if (!pipeline) return
+    await window.inkwell.pipeline.accept(pipeline.requestId)
+  },
+
+  rejectPipeline: async () => {
+    const pipeline = get().pipeline
+    if (!pipeline) return
+    await window.inkwell.pipeline.reject(pipeline.requestId)
+  },
+
+  steerPipeline: async (guidance) => {
+    const pipeline = get().pipeline
+    if (!pipeline) return
+    await window.inkwell.pipeline.steer(pipeline.requestId, guidance)
+    set({ pipelineNotice: '已注入本章要求，将从下一章起生效' })
+  },
+
+  handlePipelineEvent: (event) => {
+    const pipeline = get().pipeline
+    if (!pipeline || pipeline.requestId !== event.requestId) return
+
+    if (event.type === 'progress') {
+      set({ pipeline: { requestId: event.requestId, run: event.run, message: event.message } })
+      return
+    }
+
+    if (event.type === 'chapter_done') {
+      set({ pipeline: { requestId: event.requestId, run: event.run, message: `第 ${event.chapterNo} 章已完成` } })
+      void get().reloadDrafts()
+      void get().loadTruthFiles()
+      return
+    }
+
+    if (event.type === 'awaiting_accept') {
+      set({
+        pipeline: { requestId: event.requestId, run: event.run, message: `第 ${event.chapterNo} 章等待你的确认` },
+        currentChapterNo: event.chapterNo
+      })
+      void get().reloadDrafts()
+      void get().loadTruthFiles()
+      void get().loadLatestAudit(event.chapterNo)
+      return
+    }
+
+    if (event.type === 'done') {
+      set({
+        pipeline: null,
+        lastRun: event.run,
+        pipelineNotice: `连写完成：本次新写 ${event.written} 章`
+      })
+      void get().loadProjects()
+      void get().reloadBriefs()
+      void get().reloadDrafts()
+      void get().loadTruthFiles()
+      return
+    }
+
+    // error
+    set({ pipeline: null, lastRun: event.run, pipelineNotice: event.message })
+    void get().loadLastRun()
+    void get().reloadDrafts()
+  },
+
+  clearPipelineNotice: () => set({ pipelineNotice: null }),
+
+  loadLastRun: async () => {
+    const projectId = get().activeProjectId
+    if (projectId === null) {
+      set({ lastRun: null })
+      return
+    }
+    const run = await guard(set, () => window.inkwell.pipeline.latest(projectId))
+    set({ lastRun: run ?? null })
+  },
+
+  loadTruthFiles: async () => {
+    const projectId = get().activeProjectId
+    if (projectId === null) {
+      set({ truth: null })
+      return
+    }
+    const truth = await guard(set, () => window.inkwell.memory.truthFiles(projectId))
+    if (truth) set({ truth })
+  },
+
+  loadLatestAudit: async (chapterNo) => {
+    const projectId = get().activeProjectId
+    if (projectId === null) {
+      set({ audit: null })
+      return
+    }
+    const report = await guard(set, () => window.inkwell.memory.latestAudit(projectId, chapterNo))
+    set({ audit: report ?? null })
+  },
+
+  rebuildMemory: async () => {
+    const projectId = get().activeProjectId
+    if (projectId === null) return
+    const result = await guard(set, () => window.inkwell.memory.rebuild(projectId))
+    if (result) {
+      set({ pipelineNotice: `已从正文重建 ${result.chapters} 章的记忆` })
+      await get().loadTruthFiles()
+    }
+  }
 }))

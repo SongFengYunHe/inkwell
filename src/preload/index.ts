@@ -7,6 +7,8 @@ import type {
   GenerateStartInput,
   InkwellApi,
   LlmRoleName,
+  PipelineEvent,
+  PipelineStartInput,
   ProjectCreateInput,
   ProjectUpdateInput,
   ProviderSaveInput,
@@ -73,6 +75,32 @@ const api: InkwellApi = {
       ipcRenderer.on(IpcChannel.wizardEvent, handler)
       return () => {
         ipcRenderer.removeListener(IpcChannel.wizardEvent, handler)
+      }
+    }
+  },
+  memory: {
+    truthFiles: (projectId: number) => ipcRenderer.invoke(IpcChannel.memoryTruthFiles, projectId),
+    latestAudit: (projectId: number, chapterNo: number) =>
+      ipcRenderer.invoke(IpcChannel.memoryLatestAudit, { projectId, chapterNo }),
+    rebuild: (projectId: number) => ipcRenderer.invoke(IpcChannel.memoryRebuild, projectId)
+  },
+  pipeline: {
+    start: (input: PipelineStartInput) => ipcRenderer.invoke(IpcChannel.pipelineStart, input),
+    abort: (requestId: string) => ipcRenderer.invoke(IpcChannel.pipelineAbort, requestId),
+    pause: (requestId: string) => ipcRenderer.invoke(IpcChannel.pipelinePause, requestId),
+    resume: (requestId: string, projectId: number) =>
+      ipcRenderer.invoke(IpcChannel.pipelineResume, { requestId, projectId }),
+    steer: (requestId: string, guidance: string) =>
+      ipcRenderer.invoke(IpcChannel.pipelineSteer, { requestId, guidance }),
+    skip: (requestId: string) => ipcRenderer.invoke(IpcChannel.pipelineSkip, requestId),
+    accept: (requestId: string) => ipcRenderer.invoke(IpcChannel.pipelineAccept, requestId),
+    reject: (requestId: string) => ipcRenderer.invoke(IpcChannel.pipelineReject, requestId),
+    latest: (projectId: number) => ipcRenderer.invoke(IpcChannel.pipelineLatest, projectId),
+    onEvent: (listener: (event: PipelineEvent) => void) => {
+      const handler = (_event: IpcRendererEvent, payload: PipelineEvent): void => listener(payload)
+      ipcRenderer.on(IpcChannel.pipelineEvent, handler)
+      return () => {
+        ipcRenderer.removeListener(IpcChannel.pipelineEvent, handler)
       }
     }
   },
