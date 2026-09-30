@@ -14,7 +14,8 @@
     "smoke": "electron-vite build && electron . --smoke",
     "smoke:llm": "electron-vite build && electron . --smoke-llm",
     "smoke:mcp": "electron-vite build && electron . --smoke-mcp",
-    "smoke:m3": "electron-vite build && electron . --smoke-m3"
+    "smoke:m3": "electron-vite build && electron . --smoke-m3",
+    "smoke:m4": "electron-vite build && electron . --smoke-m4"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",

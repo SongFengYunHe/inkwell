@@ -500,3 +500,46 @@ export function buildMemoryMessages(input: MemoryPromptInput): ChatMessage[] {
     }
   ]
 }
+
+export interface FixPromptInput {
+  bookTitle: string
+  genre: string
+  chapterNo: number
+  chapterTitle: string
+  content: string
+  /** 待修复的问题（来自审计报告） */
+  issues: Array<{ dimension: string; detail: string; evidence?: string; paragraph?: number }>
+}
+
+/** 定点修复（计划书 §7.1 步骤 4 / §12 `fix.spot`）：只改问题句段，不整章重写 */
+export function buildFixMessages(input: FixPromptInput): ChatMessage[] {
+  const issueLines = input.issues
+    .map((issue, index) => {
+      const where = issue.paragraph !== undefined ? `（第 ${issue.paragraph + 1} 段）` : ''
+      const quote = issue.evidence ? `｜原句：${issue.evidence}` : ''
+      return `${index + 1}. 【${issue.dimension}】${where}${issue.detail}${quote}`
+    })
+    .join('\n')
+
+  return [
+    { role: 'system', content: SYSTEM_EDITOR },
+    {
+      role: 'user',
+      content: [
+        `【任务】对第 ${input.chapterNo} 章正文做「定点修复」：只修掉下面列出的问题，其余一字不动。`,
+        [row('书名', input.bookTitle), row('题材', input.genre), row('本章标题', input.chapterTitle)]
+          .filter(Boolean)
+          .join('\n'),
+        `【待修复问题】\n${issueLines || '（无）'}`,
+        `【本章正文】\n${input.content.trim()}`,
+        [
+          '【修复要求】',
+          '- 只修改与上述问题相关的句子或段落，情节、信息量、人物与对话内容保持不变',
+          '- 不得整章重写、不得删减情节、不得新增设定',
+          '- 保持原有分段与叙事视角',
+          `- 输出修复后的完整正文；不要输出任何说明或差异标记；${NO_MARKDOWN}`
+        ].join('\n')
+      ].join('\n\n')
+    }
+  ]
+}

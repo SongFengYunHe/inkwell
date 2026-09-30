@@ -102,7 +102,7 @@ export type DraftSaveInput = Partial<Omit<ChapterDraft, 'id' | 'createdAt' | 'up
   chapterNo: number
 }
 
-/** 接入类型：官方/中转（OpenAI 兼容）与自定义反代端点 */
+/** 接入类型：官方/中转（OpenAI 兼容）与自定义端点 */
 export type ProviderKind = 'openai-compatible' | 'custom-reverse-proxy'
 
 /** 创作角色（计划书 §6.1） */
@@ -118,11 +118,11 @@ export interface Provider {
   enabled: boolean
   /** 是否已保存密钥（密钥本身永不出主进程） */
   hasApiKey: boolean
-  /** 自定义请求头（反代端点常用） */
+  /** 自定义请求头（部分自建/第三方端点需要） */
   headers: Record<string, string>
   /** 每分钟最大请求数，0 表示不限速 */
   rateLimitPerMin: number
-  /** 反代端点的风险确认 */
+  /** 自定义端点已确认使用须知 */
   riskAccepted: boolean
   createdAt: number
   updatedAt: number
@@ -362,6 +362,8 @@ export interface AuditCheck {
   detail: string
   /** 命中的问题片段（可选，供定位） */
   evidence?: string
+  /** 命中的段落序号（从 0 开始，用于定位到具体段落） */
+  paragraph?: number
 }
 
 /** 章节审计报告 */
@@ -457,6 +459,60 @@ export type PipelineEvent =
   | { requestId: string; type: 'done'; run: PipelineRun; written: number }
   | { requestId: string; type: 'error'; run: PipelineRun | null; message: string }
 
+/* ============================ M4：修复与导出 ============================ */
+
+/** 反 AI 味确定性规则产生的一条变更 */
+export interface StyleChange {
+  rule: string
+  before: string
+  after: string
+  count: number
+}
+
+/** 一键修复入参 */
+export interface FixChapterInput {
+  projectId: number
+  chapterNo: number
+  /** 是否用模型做语义定点修复（确定性规则始终执行） */
+  useModel?: boolean
+}
+
+/** 一键修复结果（审计 → 定点修复 → 重审） */
+export interface FixResult {
+  draft: ChapterDraft
+  styleChanges: StyleChange[]
+  modelUsed: boolean
+  auditBefore: AuditReport | null
+  auditAfter: AuditReport | null
+  /** 没有任何可修复项时为 true，未新增版本 */
+  noop: boolean
+}
+
+/** 导出格式 */
+export type ExportFormat = 'txt' | 'md' | 'docx' | 'epub'
+
+export interface ExportInput {
+  projectId: number
+  formats: ExportFormat[]
+  /** 输出目录；缺省由主进程落到「文档 / Inkwell 导出 / 书名」 */
+  outDir?: string
+}
+
+export interface ExportFile {
+  format: ExportFormat
+  path: string
+  bytes: number
+  chapters: number
+}
+
+export interface ExportResult {
+  dir: string
+  bookTitle: string
+  files: ExportFile[]
+  /** 未导出的章节（无正文），便于提示用户 */
+  skippedChapters: number[]
+}
+
 /** 预加载脚本向渲染进程暴露的 API 契约 */
 export interface InkwellApi {
   project: {
@@ -477,6 +533,16 @@ export interface InkwellApi {
     list(projectId: number): Promise<ChapterDraft[]>
     save(input: DraftSaveInput): Promise<ChapterDraft>
     remove(id: number): Promise<void>
+    /** 对某章正文跑完整审计并落库，返回报告 */
+    audit(projectId: number, chapterNo: number): Promise<AuditReport>
+    /** 一键修复：审计 → 确定性去 AI 味 + 可选模型定点修复 → 重审 */
+    fix(input: FixChapterInput): Promise<FixResult>
+  }
+  /** 导出成书 */
+  export: {
+    project(input: ExportInput): Promise<ExportResult>
+    /** 在系统文件管理器中打开导出目录 */
+    openDir(path: string): Promise<void>
   }
   provider: {
     list(): Promise<Provider[]>

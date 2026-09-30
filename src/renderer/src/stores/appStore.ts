@@ -21,6 +21,9 @@ import type {
   RoleRouteSaveInput,
   UsageSummary,
   AuditReport,
+  ExportFormat,
+  ExportResult,
+  FixResult,
   PipelineEvent,
   PipelineRun,
   TruthFiles
@@ -77,6 +80,10 @@ interface AppState {
   truth: TruthFiles | null
   /** M3：当前章最新审计报告 */
   audit: AuditReport | null
+  /** M4：最近一次一键修复结果 */
+  fixResult: FixResult | null
+  /** M4：最近一次导出结果 */
+  exportResult: ExportResult | null
 
   setView: (view: View) => void
   clearError: () => void
@@ -137,6 +144,14 @@ interface AppState {
   loadTruthFiles: () => Promise<void>
   loadLatestAudit: (chapterNo: number) => Promise<void>
   rebuildMemory: () => Promise<void>
+
+  /* ----------------------------- M4：审稿 / 修复 / 导出 ----------------------------- */
+  auditCurrent: () => Promise<void>
+  fixCurrent: (useModel?: boolean) => Promise<void>
+  clearFixResult: () => void
+  runExport: (formats: ExportFormat[]) => Promise<void>
+  openExportDir: (path: string) => Promise<void>
+  clearExportResult: () => void
 }
 
 /** 统一收敛错误信息，避免每个动作各写一遍 try/catch */
@@ -179,6 +194,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   lastRun: null,
   truth: null,
   audit: null,
+  fixResult: null,
+  exportResult: null,
 
   setView: (view) => set({ view }),
   clearError: () => set({ error: null }),
@@ -214,7 +231,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       wizardNotice: null,
       pipelineNotice: null,
       truth: null,
-      audit: null
+      audit: null,
+      fixResult: null,
+      exportResult: null
     })
     await Promise.all([get().reloadBriefs(), get().reloadDrafts()])
     void get().loadLastRun()
@@ -258,7 +277,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setCurrentChapter: (chapterNo) => {
-    set({ currentChapterNo: chapterNo })
+    set({ currentChapterNo: chapterNo, fixResult: null })
     void get().loadLatestAudit(chapterNo)
   },
 
@@ -597,5 +616,54 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ pipelineNotice: `已从正文重建 ${result.chapters} 章的记忆` })
       await get().loadTruthFiles()
     }
-  }
+  },
+
+  /* ----------------------------- M4：审稿 / 修复 / 导出 ----------------------------- */
+
+  auditCurrent: async () => {
+    const { activeProjectId, currentChapterNo } = get()
+    if (activeProjectId === null) return
+    const report = await guard(set, () => window.inkwell.draft.audit(activeProjectId, currentChapterNo))
+    if (!report) return
+    set({
+      audit: report,
+      fixResult: null,
+      notice: `审稿完成：${report.passed ? '整体通过' : '存在 error 级问题'}（评分 ${report.score}）`
+    })
+  },
+
+  fixCurrent: async (useModel) => {
+    const { activeProjectId, currentChapterNo } = get()
+    if (activeProjectId === null) return
+    const result = await guard(set, () =>
+      window.inkwell.draft.fix({ projectId: activeProjectId, chapterNo: currentChapterNo, useModel: useModel ?? true })
+    )
+    if (!result) return
+
+    set({
+      fixResult: result,
+      audit: result.auditAfter ?? get().audit,
+      notice: result.noop
+        ? '没有需要修复的问题'
+        : `已修复并保存为 v${result.draft.version}（规则变更 ${result.styleChanges.length} 条${
+            result.modelUsed ? ' + 模型定点修复' : ''
+          }）`
+    })
+    await get().reloadDrafts()
+  },
+
+  clearFixResult: () => set({ fixResult: null }),
+
+  runExport: async (formats) => {
+    const projectId = get().activeProjectId
+    if (projectId === null || formats.length === 0) return
+    const result = await guard(set, () => window.inkwell.export.project({ projectId, formats }))
+    if (result) set({ exportResult: result })
+  },
+
+  openExportDir: async (path) => {
+    await window.inkwell.export.openDir(path)
+  },
+
+  clearExportResult: () => set({ exportResult: null })
 }))

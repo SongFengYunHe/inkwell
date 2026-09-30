@@ -3,6 +3,8 @@ import type {
   BriefExpandInput,
   BriefSaveInput,
   DraftSaveInput,
+  ExportInput,
+  FixChapterInput,
   GenerateEvent,
   GenerateStartInput,
   InkwellApi,
@@ -36,7 +38,14 @@ const api: InkwellApi = {
   draft: {
     list: (projectId: number) => ipcRenderer.invoke(IpcChannel.draftList, projectId),
     save: (input: DraftSaveInput) => ipcRenderer.invoke(IpcChannel.draftSave, input),
-    remove: (id: number) => ipcRenderer.invoke(IpcChannel.draftRemove, id)
+    remove: (id: number) => ipcRenderer.invoke(IpcChannel.draftRemove, id),
+    audit: (projectId: number, chapterNo: number) =>
+      ipcRenderer.invoke(IpcChannel.draftAudit, { projectId, chapterNo }),
+    fix: (input: FixChapterInput) => ipcRenderer.invoke(IpcChannel.draftFix, input)
+  },
+  export: {
+    project: (input: ExportInput) => ipcRenderer.invoke(IpcChannel.exportProject, input),
+    openDir: (path: string) => ipcRenderer.invoke(IpcChannel.exportOpenDir, path)
   },
   provider: {
     list: () => ipcRenderer.invoke(IpcChannel.providerList),

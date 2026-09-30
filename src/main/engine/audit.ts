@@ -3,6 +3,7 @@ import { invokeJson } from '../llm/invoke'
 import { auditIssuesSchema } from '../llm/schemas'
 import { buildAuditMessages } from '../prompts/zh-CN'
 import { buildTruthSnapshot } from './truth'
+import { FILLER_PHRASES, detectParallelism } from './rules'
 
 /** 把文本切成段落（忽略空行） */
 function paragraphsOf(text: string): string[] {
@@ -47,7 +48,15 @@ function coverageRatio(content: string, terms: string[]): { hit: number; total: 
   return { hit, total: unique.length }
 }
 
-const AI_PHRASES = ['总而言之', '综上所述', '值得注意的是', '不得不提的是', '让我们', '由此可见', '换句话说']
+/** 找出包含指定片段的首个段落序号（找不到返回 undefined） */
+function paragraphIndexOf(paragraphs: string[], needle: string): number | undefined {
+  if (!needle) return undefined
+  const index = paragraphs.findIndex((paragraph) => paragraph.includes(needle))
+  return index >= 0 ? index : undefined
+}
+
+/** 审计用套话表：在「定点修复」可删表的基础上，补充仅检测的项 */
+const DETECT_PHRASES = [...FILLER_PHRASES, '让我们']
 
 /** 确定性审计维度（不调用模型，零成本、可解释） */
 export function deterministicAudit(
@@ -90,13 +99,14 @@ export function deterministicAudit(
   })
 
   // 4. AI 腔套话
-  const hitPhrases = AI_PHRASES.filter((phrase) => content.includes(phrase))
+  const hitPhrases = DETECT_PHRASES.filter((phrase) => content.includes(phrase))
   checks.push({
     dimension: '无 AI 腔套话',
     passed: hitPhrases.length === 0,
     severity: 'warn',
     detail: hitPhrases.length ? `命中固定套话：${hitPhrases.join('、')}` : '未命中内置套话表',
-    evidence: hitPhrases[0]
+    evidence: hitPhrases[0],
+    paragraph: hitPhrases.length ? paragraphIndexOf(paragraphs, hitPhrases[0]) : undefined
   })
 
   // 5. 细纲角色出场
@@ -134,11 +144,13 @@ export function deterministicAudit(
 
   // 8. 段落长度
   const longest = paragraphs.reduce((max, item) => Math.max(max, plainLength(item)), 0)
+  const longestIndex = paragraphs.findIndex((item) => plainLength(item) === longest)
   checks.push({
     dimension: '段落长度适中',
     passed: longest <= 500,
     severity: 'info',
-    detail: paragraphs.length === 0 ? '正文为空' : `最长段落 ${longest} 字（建议 ≤500）`
+    detail: paragraphs.length === 0 ? '正文为空' : `最长段落 ${longest} 字（建议 ≤500）`,
+    paragraph: longest > 500 && longestIndex >= 0 ? longestIndex : undefined
   })
 
   // 9. 相邻重复句
@@ -154,7 +166,8 @@ export function deterministicAudit(
     passed: duplicate === '',
     severity: 'warn',
     detail: duplicate ? '存在相邻完全重复的句子' : '未发现相邻重复句',
-    evidence: duplicate || undefined
+    evidence: duplicate || undefined,
+    paragraph: duplicate ? paragraphIndexOf(paragraphs, duplicate) : undefined
   })
 
   // 10. 与前章不重复
@@ -193,13 +206,27 @@ export function deterministicAudit(
     detail: paragraphs.length < 3 ? `段落过少（${paragraphs.length} 段）` : `末段 ${plainLength(lastParagraph)} 字`
   })
 
-  // 13. 标点使用规范
-  const punctuationNoise = /([！？!?])\1{2,}|[。，]{2,}/.test(content)
+  // 13. 排比 / 同构堆砌（反 AI 味）
+  const parallelParagraphs = detectParallelism(content)
+  checks.push({
+    dimension: '无排比堆砌',
+    passed: parallelParagraphs.length === 0,
+    severity: 'warn',
+    detail: parallelParagraphs.length
+      ? `${parallelParagraphs.length} 个段落出现 3 句以上同构句式`
+      : '未发现明显排比堆砌',
+    paragraph: parallelParagraphs[0]
+  })
+
+  // 14. 标点使用规范
+  const punctuationMatch = content.match(/([！？!?])\1{2,}|[。，]{2,}/)
   checks.push({
     dimension: '标点使用规范',
-    passed: !punctuationNoise,
+    passed: punctuationMatch === null,
     severity: 'info',
-    detail: punctuationNoise ? '存在连续重复标点（如 ！！！ 或 。。）' : '标点使用正常'
+    detail: punctuationMatch ? '存在连续重复标点（如 ！！！ 或 。。）' : '标点使用正常',
+    evidence: punctuationMatch?.[0],
+    paragraph: punctuationMatch ? paragraphIndexOf(paragraphs, punctuationMatch[0]) : undefined
   })
 
   return checks

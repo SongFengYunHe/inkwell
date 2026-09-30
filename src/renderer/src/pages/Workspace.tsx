@@ -2,6 +2,7 @@ import { useState } from 'react'
 import BriefPanel from '../components/BriefPanel'
 import ChapterNav from '../components/ChapterNav'
 import DraftPanel from '../components/DraftPanel'
+import ExportDialog from '../components/ExportDialog'
 import MemoryPanel from '../components/MemoryPanel'
 import OutlinePanel from '../components/OutlinePanel'
 import PipelineBar from '../components/PipelineBar'
@@ -27,6 +28,7 @@ export default function Workspace() {
   const setView = useAppStore((s) => s.setView)
 
   const [tab, setTab] = useState<Tab>('brief')
+  const [exportOpen, setExportOpen] = useState(false)
 
   const project = projects.find((item) => item.id === activeProjectId) ?? null
   if (!project) {
@@ -54,6 +56,13 @@ export default function Workspace() {
         </div>
         <div className="ml-auto flex items-center gap-3">
           <span className="text-xs text-stone-400">{loading ? '处理中…' : ''}</span>
+          <button
+            type="button"
+            onClick={() => setExportOpen(true)}
+            className="rounded-lg border border-stone-200 px-3 py-1.5 text-sm text-stone-600 transition hover:bg-stone-50"
+          >
+            导出
+          </button>
           <button
             type="button"
             onClick={() => setView('settings')}
@@ -107,6 +116,8 @@ export default function Workspace() {
           </div>
         </main>
       </div>
+
+      {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} />}
     </div>
   )
 }

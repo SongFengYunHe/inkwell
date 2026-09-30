@@ -7,7 +7,7 @@ export interface OpenAiCompatibleConfig {
   apiKey: string
   /** 连接测试用的默认模型；正式生成时以 ChatRequest.model 为准 */
   model?: string
-  /** 自定义请求头（反代端点常用） */
+  /** 自定义请求头（部分自建 / 第三方端点需要） */
   headers?: Record<string, string>
 }
 

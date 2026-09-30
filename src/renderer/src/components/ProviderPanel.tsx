@@ -28,7 +28,7 @@ const PRESETS = [
 function defaultForm(kind: ProviderKind): ProviderForm {
   if (kind === 'custom-reverse-proxy') {
     return {
-      name: '自定义反代端点',
+      name: '自定义端点',
       baseUrl: 'http://127.0.0.1:8000/v1',
       model: 'gpt-4o',
       apiKey: '',
@@ -210,11 +210,10 @@ export default function ProviderPanel({ kind }: { kind: ProviderKind }) {
 
         {isProxy && (
           <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
-            <p className="font-medium">风险提示（请务必阅读）</p>
+            <p className="font-medium">使用须知</p>
             <p className="mt-1">
-              Inkwell 只提供「自定义 OpenAI 兼容端点」这一通用能力，不内置也不分发任何针对特定厂商的绕过实现。
-              社区常见的网页端反代通常违反厂商服务条款，可能导致账号封禁、限流或随时失效，风险由你自行承担。
-              Inkwell 不对因此产生的任何后果负责，也不把此路径作为推荐用法。
+              Inkwell 只提供「自定义 OpenAI 兼容端点」这一通用接入能力：填写 Base URL、模型名与可选请求头即可。
+              端点的可用性、稳定性与合规性由你自行负责，Inkwell 不作任何担保，也不将本路径作为推荐用法。
             </p>
             <label className="mt-2 flex items-center gap-2 text-amber-900">
               <input
@@ -223,7 +222,7 @@ export default function ProviderPanel({ kind }: { kind: ProviderKind }) {
                 onChange={(e) => setForm({ ...form, riskAccepted: e.target.checked })}
                 className="h-4 w-4 rounded border-amber-400"
               />
-              我已阅读并确认上述风险，自愿使用该端点
+              我已阅读并确认上述说明，自愿使用该端点
             </label>
           </div>
         )}
@@ -261,12 +260,12 @@ export default function ProviderPanel({ kind }: { kind: ProviderKind }) {
                 rows={3}
                 value={form.headersText}
                 onChange={(e) => setForm({ ...form, headersText: e.target.value })}
-                placeholder={'Referer: https://example.com\nX-Custom: value'}
+                placeholder={'X-Api-Version: 2024-01\nX-Organization: my-org'}
                 className={`${INPUT_CLASS} resize-none font-mono text-xs`}
               />
             </Labeled>
 
-            <Labeled label="限速（每分钟请求数）" hint="0 表示不限速；反代建议 3-10">
+            <Labeled label="限速（每分钟请求数）" hint="0 表示不限速；建议 3-10">
               <input
                 type="number"
                 min={0}

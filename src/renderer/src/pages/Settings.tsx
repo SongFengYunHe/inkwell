@@ -10,7 +10,7 @@ type SettingsTab = 'official' | 'agent' | 'proxy' | 'route' | 'usage'
 const TABS: Array<{ key: SettingsTab; label: string }> = [
   { key: 'official', label: '官方 API（BYOK）' },
   { key: 'agent', label: 'Agent 模式（MCP）' },
-  { key: 'proxy', label: '自定义反代' },
+  { key: 'proxy', label: '自定义端点' },
   { key: 'route', label: '角色-模型路由' },
   { key: 'usage', label: '用量' }
 ]

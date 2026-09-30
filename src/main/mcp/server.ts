@@ -57,12 +57,13 @@ function firstUnwrittenChapter(project: Project, written: Set<number>): number |
   return null
 }
 
-/** 轻量确定性审稿（不含模型调用）：复用引擎的 13 个确定性审计维度 */
+/** 轻量确定性审稿（不含模型调用）：复用引擎的 14 个确定性审计维度 */
 function reviewChapter(project: Project, brief: ChapterBrief | null, content: string, previousContent: string) {
   return deterministicAudit(project, brief, content, previousContent).map((check) => ({
     check: check.dimension,
     passed: check.passed,
-    detail: check.detail
+    detail: check.detail,
+    paragraph: check.paragraph
   }))
 }
 
@@ -323,8 +324,8 @@ export function createInkwellMcpServer(): McpServer {
     {
       title: '章节自检',
       description:
-        '对某章正文做 13 项确定性审计（字数 / Markdown / 标题行 / AI 腔 / 角色覆盖 / 关键事件 / 钩子 / ' +
-        '段落节奏 / 重复句 / 与上章重复 / 口头禅密度 / 收尾段 / 标点规范）。',
+        '对某章正文做 14 项确定性审计（字数 / Markdown / 标题行 / AI 腔 / 角色覆盖 / 关键事件 / 钩子 / ' +
+        '段落节奏 / 重复句 / 与上章重复 / 口头禅密度 / 收尾段 / 排比堆砌 / 标点规范），并给出命中的段落序号。',
       inputSchema: {
         projectId: z.number().int().positive(),
         chapterNo: z.number().int().min(1),

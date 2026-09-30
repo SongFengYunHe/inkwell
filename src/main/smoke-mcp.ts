@@ -154,7 +154,7 @@ export async function runSmokeMcp(): Promise<void> {
     ) as { passed: boolean; checks: Array<{ check: string; passed: boolean }> }
     checks.push(['inkwell_review 返回结构化结果', Array.isArray(review.checks) && review.checks.length >= 5])
 
-    // ---- 落盘校验（绕过 MCP 直接读库） ----
+    // ---- 落盘校验（不经 MCP，直接读库） ----
     const storedDrafts = listDrafts(project.id).filter((item) => item.content.trim())
     checks.push(['MCP 写入的正文确实落到了同一个库', storedDrafts.length === CHAPTERS_TO_WRITE])
     checks.push(['细纲未被 MCP 流程破坏', listBriefs(project.id).length === TOTAL_CHAPTERS])

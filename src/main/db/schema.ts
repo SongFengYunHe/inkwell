@@ -87,11 +87,11 @@ export const provider = sqliteTable('provider', {
   apiKeyEnc: text('api_key_enc').notNull().default(''),
   model: text('model').notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
-  /** 自定义请求头（反代端点常用，如 Referer / Cookie） */
+  /** 自定义请求头（部分自建 / 第三方端点需要） */
   headers: text('headers', { mode: 'json' }).$type<Record<string, string>>().notNull().default({}),
   /** 每分钟最大请求数，0 表示不限速 */
   rateLimitPerMin: integer('rate_limit_per_min').notNull().default(0),
-  /** 反代端点需用户勾选风险确认后才可启用 */
+  /** 自定义端点需用户确认使用须知后才可启用 */
   riskAccepted: integer('risk_accepted', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull()

@@ -58,7 +58,7 @@ function limiterFor(target: ResolvedTarget): Semaphore {
   return semaphore
 }
 
-/** 严格限速：主要给自定义反代端点用，降低触发风控的概率 */
+/** 严格限速：主要给自定义端点用，避免请求过于密集 */
 async function waitForRateLimit(providerId: number, perMinute: number): Promise<void> {
   if (perMinute <= 0) return
   const interval = Math.ceil(60_000 / perMinute)

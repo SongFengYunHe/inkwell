@@ -14,6 +14,10 @@ export const IpcChannel = {
   draftList: 'draft:list',
   draftSave: 'draft:save',
   draftRemove: 'draft:remove',
+  draftAudit: 'draft:audit',
+  draftFix: 'draft:fix',
+  exportProject: 'export:project',
+  exportOpenDir: 'export:open-dir',
   providerList: 'provider:list',
   providerSave: 'provider:save',
   providerRemove: 'provider:remove',
@@ -104,7 +108,7 @@ export const draftSaveSchema = z.object({
   chapterNo: z.number().int().min(1).max(99_999),
   version: z.number().int().min(1).max(9_999).optional(),
   status: z.enum(['draft', 'revised', 'finalized', 'archived']).optional(),
-  source: z.enum(['write', 'continue', 'rewrite', 'polish']).optional(),
+  source: z.enum(['write', 'continue', 'rewrite', 'polish', 'fix']).optional(),
   content: z.string().max(2_000_000).optional()
 })
 
@@ -186,3 +190,18 @@ export const chapterQuerySchema = z.object({
   projectId: projectIdSchema,
   chapterNo: z.number().int().min(1).max(99_999)
 })
+
+/* ============================ M4：修复与导出 ============================ */
+
+export const fixChapterSchema = chapterQuerySchema.extend({
+  useModel: z.boolean().optional()
+})
+
+export const exportSchema = z.object({
+  projectId: projectIdSchema,
+  formats: z.array(z.enum(['txt', 'md', 'docx', 'epub'])).min(1).max(4),
+  outDir: z.string().max(1_000).optional()
+})
+
+/** 本地路径（打开导出目录等） */
+export const pathSchema = z.string().min(1).max(1_000)

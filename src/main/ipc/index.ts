@@ -4,9 +4,12 @@ import {
   briefSaveSchema,
   chapterQuerySchema,
   draftSaveSchema,
+  exportSchema,
   exportTaskSchema,
+  fixChapterSchema,
   generateStartSchema,
   idSchema,
+  pathSchema,
   pipelineStartSchema,
   pipelineSteerSchema,
   projectCreateSchema,
@@ -19,14 +22,18 @@ import {
 } from '@shared/ipc'
 import { join } from 'node:path'
 import type { GenerateEvent, PipelineEvent, PipelineRun, WizardEvent } from '@shared/types'
-import { app, ipcMain, type WebContents } from 'electron'
+import { app, ipcMain, shell, type WebContents } from 'electron'
 import { exportChapterTask } from '../bridge/task-slip'
 import { getDatabasePath } from '../db/client'
 import * as repo from '../db/repositories'
-import { getLatestReview } from '../db/memory-repo'
+import { getLatestReview, saveReview } from '../db/memory-repo'
 import { createRun, latestRun, updateRun } from '../db/pipeline-repo'
+import { auditChapter } from '../engine/audit'
+import { fixChapter } from '../engine/fix'
 import { getTruthFiles } from '../engine/truth'
 import { rebuildMemory } from '../engine/pipeline'
+import { exportProject } from '../export'
+import { buildChapterContext } from '../llm/context'
 import {
   abortPipeline,
   acceptPipeline,
@@ -98,14 +105,52 @@ export function registerIpcHandlers(): void {
     repo.deleteDraft(idSchema.parse(id))
   })
 
+  /* --------------------------- M4 审稿与一键修复 --------------------------- */
+  ipcMain.handle(IpcChannel.draftAudit, async (_event, raw: unknown) => {
+    const input = chapterQuerySchema.parse(raw)
+    const bundle = buildChapterContext(input.projectId, input.chapterNo)
+    if (!bundle) throw new Error(`项目不存在：${input.projectId}`)
+    if (!bundle.latestDraft?.content.trim()) throw new Error('本章还没有正文，无法审稿')
+
+    const previous = repo.listDrafts(input.projectId).find((item) => item.chapterNo === input.chapterNo - 1)?.content ?? ''
+    const report = await auditChapter({
+      project: bundle.project,
+      brief: bundle.brief,
+      content: bundle.latestDraft.content,
+      previousContent: previous,
+      useModel: true
+    })
+    saveReview(input.projectId, input.chapterNo, bundle.latestDraft.id, report)
+    return report
+  })
+
+  ipcMain.handle(IpcChannel.draftFix, async (_event, raw: unknown) => {
+    const input = fixChapterSchema.parse(raw)
+    return fixChapter({
+      projectId: input.projectId,
+      chapterNo: input.chapterNo,
+      useModel: input.useModel ?? true
+    })
+  })
+
+  /* ------------------------------- M4 导出 ------------------------------- */
+  ipcMain.handle(IpcChannel.exportProject, async (_event, raw: unknown) => {
+    const input = exportSchema.parse(raw)
+    return exportProject(input, join(app.getPath('documents'), 'Inkwell 导出'))
+  })
+
+  ipcMain.handle(IpcChannel.exportOpenDir, async (_event, dir: unknown) => {
+    await shell.openPath(pathSchema.parse(dir))
+  })
+
   /* -------------------------------- 模型接入 ------------------------------- */
   ipcMain.handle(IpcChannel.providerList, () => listProviders())
   ipcMain.handle(IpcChannel.providerSave, (_event, input: unknown) => {
     const parsed = providerSaveSchema.parse(input)
-    // 反代端点必须先确认风险（计划书 §6.4 / §11）
+    // 自定义端点必须先确认使用须知（计划书 §6.4 / §11）
     if (parsed.kind === 'custom-reverse-proxy') {
       const accepted = parsed.riskAccepted ?? (parsed.id ? getProviderById(parsed.id)?.dto.riskAccepted ?? false : false)
-      if (!accepted) throw new Error('自定义反代端点需要先勾选并确认风险提示后才能保存')
+      if (!accepted) throw new Error('自定义端点需要先勾选并确认使用须知后才能保存')
     }
     return saveProvider(parsed)
   })

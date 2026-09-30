@@ -30,6 +30,10 @@ export default function DraftPanel() {
   const abortGeneration = useAppStore((s) => s.abortGeneration)
   const saveDraft = useAppStore((s) => s.saveDraft)
   const removeDraft = useAppStore((s) => s.removeDraft)
+  const auditCurrent = useAppStore((s) => s.auditCurrent)
+  const fixCurrent = useAppStore((s) => s.fixCurrent)
+  const fixResult = useAppStore((s) => s.fixResult)
+  const clearFixResult = useAppStore((s) => s.clearFixResult)
 
   const brief = briefs.find((item) => item.chapterNo === currentChapterNo) ?? null
   const versions = useMemo(
@@ -105,6 +109,22 @@ export default function DraftPanel() {
         >
           {MODE_LABEL.polish}
         </button>
+        <button
+          type="button"
+          disabled={!latest?.content || generating !== null}
+          onClick={() => void auditCurrent()}
+          className={BUTTON_GHOST}
+        >
+          审稿
+        </button>
+        <button
+          type="button"
+          disabled={!latest?.content || generating !== null}
+          onClick={() => void fixCurrent(true)}
+          className={BUTTON_GHOST}
+        >
+          一键修复
+        </button>
 
         {generating !== null && (
           <button
@@ -154,6 +174,27 @@ export default function DraftPanel() {
               关闭
             </button>
           )}
+        </div>
+      )}
+
+      {fixResult && !fixResult.noop && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-800">
+          <span className="font-medium">一键修复结果</span>
+          <span>规则变更 {fixResult.styleChanges.length} 条</span>
+          {fixResult.modelUsed && <span>· 含模型定点修复</span>}
+          {fixResult.auditBefore && fixResult.auditAfter && (
+            <span>
+              · 评分 {fixResult.auditBefore.score} → {fixResult.auditAfter.score}
+            </span>
+          )}
+          {fixResult.styleChanges.length > 0 && (
+            <span className="text-emerald-700">
+              · {[...new Set(fixResult.styleChanges.map((change) => change.rule))].join('、')}
+            </span>
+          )}
+          <button type="button" onClick={clearFixResult} className="ml-auto text-emerald-600 hover:underline">
+            关闭
+          </button>
         </div>
       )}
 

@@ -167,6 +167,11 @@ export default function MemoryPanel() {
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="text-stone-700">{check.dimension}</span>
+                  {check.paragraph !== undefined && (
+                    <span className="ml-2 rounded bg-stone-100 px-1.5 py-0.5 text-[11px] text-stone-500">
+                      第 {check.paragraph + 1} 段
+                    </span>
+                  )}
                   <span className="ml-2 text-xs text-stone-400">{check.detail}</span>
                 </span>
               </li>

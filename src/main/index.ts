@@ -7,14 +7,16 @@ import { runSmoke } from './smoke'
 import { runSmokeLlm } from './smoke-llm'
 import { runSmokeMcp } from './smoke-mcp'
 import { runSmokeM3 } from './smoke-m3'
+import { runSmokeM4 } from './smoke-m4'
 
 const isSmokeRun = process.argv.includes('--smoke')
 const isLlmSmokeRun = process.argv.includes('--smoke-llm')
 const isMcpSmokeRun = process.argv.includes('--smoke-mcp')
 const isM3SmokeRun = process.argv.includes('--smoke-m3')
+const isM4SmokeRun = process.argv.includes('--smoke-m4')
 
 // 冒烟自检使用独立目录，避免污染真实用户数据
-if (isSmokeRun || isLlmSmokeRun || isMcpSmokeRun || isM3SmokeRun) {
+if (isSmokeRun || isLlmSmokeRun || isMcpSmokeRun || isM3SmokeRun || isM4SmokeRun) {
   app.setPath('userData', join(app.getPath('temp'), 'inkwell-smoke'))
 }
 
@@ -74,6 +76,11 @@ app.whenReady().then(() => {
 
   if (isM3SmokeRun) {
     void runSmokeM3()
+    return
+  }
+
+  if (isM4SmokeRun) {
+    void runSmokeM4()
     return
   }
 
