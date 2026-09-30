@@ -526,7 +526,7 @@ export interface VelaImportSummary {
 
 /** M5：MCP Server 的启动方式说明（供设置页一键生成 Agent 配置） */
 export interface McpLaunchConfig {
-  /** 运行方式：electron = 用应用自带运行时（无需另装 Node） */
+  /** electron = 用应用自带运行时（Inkwell.exe + ELECTRON_RUN_AS_NODE，无需另装 Node）；node = 源码目录用系统 Node */
   mode: 'electron' | 'node'
   /** mcp.js 入口绝对路径 */
   entry: string

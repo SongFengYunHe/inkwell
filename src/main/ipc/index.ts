@@ -359,8 +359,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.appMcpLaunch, (): McpLaunchConfig => {
     const entry = join(app.getAppPath(), 'out', 'main', 'mcp.js')
 
-    // 安装版：mcp.js 位于 app.asar 内，普通 node 读不了 asar；
-    // 改用应用自带的 Electron 运行时（ELECTRON_RUN_AS_NODE=1），无需用户另装 Node。
+    // 安装版：mcp.js 位于 app.asar 归档内，普通 Node 读不了 asar；
+    // 改用应用自带的 Electron 运行时（ELECTRON_RUN_AS_NODE=1），等价于一个 Node 进程，
+    // 且自带 asar 支持，无需用户另装 Node。
     if (app.isPackaged) {
       const command = process.execPath
       const env = { ELECTRON_RUN_AS_NODE: '1' }
@@ -370,15 +371,11 @@ export function registerIpcHandlers(): void {
         command,
         args: [entry],
         env,
-        configJson: JSON.stringify(
-          { mcpServers: { inkwell: { command, args: [entry], env } } },
-          null,
-          2
-        )
+        configJson: JSON.stringify({ mcpServers: { inkwell: { command, args: [entry], env } } }, null, 2)
       }
     }
 
-    // 开发模式：源码目录里直接用系统 Node
+    // 开发模式：源码目录里直接跑系统 Node
     const command = 'node'
     return {
       mode: 'node',

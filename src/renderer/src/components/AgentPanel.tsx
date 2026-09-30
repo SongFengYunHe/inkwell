@@ -79,9 +79,7 @@ export default function AgentPanel() {
           <button type="button" onClick={() => void handleCopy()} disabled={!launch} className={BUTTON_GHOST}>
             {copied ? '已复制' : '复制配置'}
           </button>
-          {launch?.mode === 'electron' && (
-            <span className="text-[11px] text-stone-400">入口：{launch.entry}</span>
-          )}
+          {launch?.mode === 'electron' && <span className="text-[11px] text-stone-400">入口：{launch.entry}</span>}
         </div>
         <textarea
           readOnly

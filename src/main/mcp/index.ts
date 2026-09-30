@@ -8,7 +8,10 @@ import { resolveDatabasePath } from './paths'
  * 由外部 Agent（TRAE WorkBuddy / Claude Code / Cursor 等）拉起，用其自身额度完成模型调用，
  * Inkwell 只负责上下文装配、状态推进与落盘。
  *
- * 运行： node out/main/mcp.js   （可用环境变量 INKWELL_DB 覆盖数据库路径）
+ * 运行：
+ *   开发：  node out/main/mcp.js            （可用环境变量 INKWELL_DB 覆盖数据库路径）
+ *   安装版：Inkwell.exe（配 ELECTRON_RUN_AS_NODE=1）+ resources/app.asar/out/main/mcp.js
+ *
  * 注意：stdout 属于 MCP 协议，所有日志一律走 stderr。
  */
 async function main(): Promise<void> {
