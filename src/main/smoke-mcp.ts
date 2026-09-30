@@ -80,11 +80,17 @@ export async function runSmokeMcp(): Promise<void> {
     }
 
     // ---- 以真实 MCP 协议连接独立进程 ----
-    const mcpEntry = join(process.cwd(), 'out', 'main', 'mcp.js')
+    // 默认用系统 node 跑源码产物；可用环境变量改跑「安装版」入口：
+    //   INKWELL_MCP_COMMAND=<Inkwell.exe> INKWELL_MCP_ENTRY=<app.asar/out/main/mcp.js> INKWELL_MCP_ELECTRON=1
+    const entry = process.env.INKWELL_MCP_ENTRY ?? join(process.cwd(), 'out', 'main', 'mcp.js')
+    const command = process.env.INKWELL_MCP_COMMAND ?? process.env.INKWELL_NODE ?? 'node'
+    const extraEnv: Record<string, string> =
+      process.env.INKWELL_MCP_ELECTRON === '1' ? { ELECTRON_RUN_AS_NODE: '1' } : {}
+
     const transport = new StdioClientTransport({
-      command: process.env.INKWELL_NODE ?? 'node',
-      args: [mcpEntry],
-      env: { ...process.env, INKWELL_DB: getDatabasePath() }
+      command,
+      args: [entry],
+      env: { ...process.env, ...extraEnv, INKWELL_DB: getDatabasePath() }
     })
 
     client = new Client({ name: 'inkwell-smoke', version: '0.1.0' })

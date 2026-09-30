@@ -524,6 +524,19 @@ export interface VelaImportSummary {
   tables: string[]
 }
 
+/** M5：MCP Server 的启动方式说明（供设置页一键生成 Agent 配置） */
+export interface McpLaunchConfig {
+  /** 运行方式：electron = 用应用自带运行时（无需另装 Node） */
+  mode: 'electron' | 'node'
+  /** mcp.js 入口绝对路径 */
+  entry: string
+  command: string
+  args: string[]
+  env: Record<string, string>
+  /** 可直接粘贴进 Agent 配置的完整 JSON */
+  configJson: string
+}
+
 /** 预加载脚本向渲染进程暴露的 API 契约 */
 export interface InkwellApi {
   project: {
@@ -622,5 +635,7 @@ export interface InkwellApi {
     dbPath(): Promise<string>
     /** MCP Server 入口的绝对路径，供外部 Agent 配置使用 */
     mcpEntry(): Promise<string>
+    /** MCP Server 的启动方式（含可直接粘贴的配置 JSON） */
+    mcpLaunch(): Promise<McpLaunchConfig>
   }
 }

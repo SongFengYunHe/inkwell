@@ -53,7 +53,8 @@ export const IpcChannel = {
   /** 主进程 → 渲染进程的连写进度推送通道 */
   pipelineEvent: 'pipeline:event',
   appDbPath: 'app:db-path',
-  appMcpEntry: 'app:mcp-entry'
+  appMcpEntry: 'app:mcp-entry',
+  appMcpLaunch: 'app:mcp-launch'
 } as const
 
 export type IpcChannelName = (typeof IpcChannel)[keyof typeof IpcChannel]

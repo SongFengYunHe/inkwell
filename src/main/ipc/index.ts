@@ -21,7 +21,7 @@ import {
   wizardStartSchema
 } from '@shared/ipc'
 import { join } from 'node:path'
-import type { GenerateEvent, PipelineEvent, PipelineRun, WizardEvent } from '@shared/types'
+import type { GenerateEvent, McpLaunchConfig, PipelineEvent, PipelineRun, WizardEvent } from '@shared/types'
 import { app, dialog, ipcMain, shell, type WebContents } from 'electron'
 import { exportChapterTask } from '../bridge/task-slip'
 import { getDatabasePath } from '../db/client'
@@ -356,4 +356,37 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IpcChannel.appDbPath, () => getDatabasePath())
   ipcMain.handle(IpcChannel.appMcpEntry, () => join(app.getAppPath(), 'out', 'main', 'mcp.js'))
+  ipcMain.handle(IpcChannel.appMcpLaunch, (): McpLaunchConfig => {
+    const entry = join(app.getAppPath(), 'out', 'main', 'mcp.js')
+
+    // 安装版：mcp.js 位于 app.asar 内，普通 node 读不了 asar；
+    // 改用应用自带的 Electron 运行时（ELECTRON_RUN_AS_NODE=1），无需用户另装 Node。
+    if (app.isPackaged) {
+      const command = process.execPath
+      const env = { ELECTRON_RUN_AS_NODE: '1' }
+      return {
+        mode: 'electron',
+        entry,
+        command,
+        args: [entry],
+        env,
+        configJson: JSON.stringify(
+          { mcpServers: { inkwell: { command, args: [entry], env } } },
+          null,
+          2
+        )
+      }
+    }
+
+    // 开发模式：源码目录里直接用系统 Node
+    const command = 'node'
+    return {
+      mode: 'node',
+      entry,
+      command,
+      args: [entry],
+      env: {},
+      configJson: JSON.stringify({ mcpServers: { inkwell: { command, args: [entry] } } }, null, 2)
+    }
+  })
 }

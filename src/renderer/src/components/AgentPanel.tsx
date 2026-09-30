@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import type { McpLaunchConfig } from '@shared/types'
+import { useEffect, useState } from 'react'
 import { useAppStore } from '../stores/appStore'
 import { BUTTON_GHOST, BUTTON_PRIMARY, INPUT_CLASS, Labeled } from './ui'
 
 const TOOL_DOCS: Array<{ name: string; note: string }> = [
   { name: 'inkwell_status', note: '列出所有项目与进度，判断还有哪些章要写' },
-  { name: 'inkwell_next_task', note: '领取下一章任务（含完整提示词），细纲缺失时先给细纲任务' },
+  { name: 'inkwell_next_task', note: '领取下一章任务（含完整提示词与真相文件），细纲缺失时先给细纲任务' },
   { name: 'inkwell_get_context', note: '取指定章的上下文包与写作提示词' },
   { name: 'inkwell_save_brief', note: '写回某章细纲' },
-  { name: 'inkwell_save_draft', note: '写回某章正文（纯文本）' },
-  { name: 'inkwell_review', note: '确定性自检：字数 / Markdown 残留 / 标题行 / AI 腔 / 角色覆盖' }
+  { name: 'inkwell_save_draft', note: '写回某章正文（纯文本），顺带回写记忆' },
+  { name: 'inkwell_memory', note: '读取七个真相文件，避免前后矛盾' },
+  { name: 'inkwell_review', note: '14 项确定性自检（字数 / Markdown / AI 腔 / 角色覆盖 / 段落定位等）' }
 ]
 
 export default function AgentPanel() {
@@ -19,7 +21,8 @@ export default function AgentPanel() {
   const exportTask = useAppStore((s) => s.exportTask)
   const importDraft = useAppStore((s) => s.importDraft)
 
-  const [mcpEntry, setMcpEntry] = useState('')
+  const [launch, setLaunch] = useState<McpLaunchConfig | null>(null)
+  const [copied, setCopied] = useState(false)
   const [projectId, setProjectId] = useState<number>(activeProjectId ?? 0)
   const [chapterNo, setChapterNo] = useState(1)
   const [taskPath, setTaskPath] = useState('')
@@ -29,29 +32,19 @@ export default function AgentPanel() {
 
   useEffect(() => {
     void loadProjects()
-    void window.inkwell.app.mcpEntry().then(setMcpEntry)
+    void window.inkwell.app.mcpLaunch().then(setLaunch)
   }, [loadProjects])
 
   useEffect(() => {
     if (projectId === 0 && projects.length > 0) setProjectId(activeProjectId ?? projects[0].id)
   }, [projects, activeProjectId, projectId])
 
-  const configSnippet = useMemo(
-    () =>
-      JSON.stringify(
-        {
-          mcpServers: {
-            inkwell: {
-              command: 'node',
-              args: [mcpEntry || '<Inkwell 目录>/out/main/mcp.js']
-            }
-          }
-        },
-        null,
-        2
-      ),
-    [mcpEntry]
-  )
+  const handleCopy = async (): Promise<void> => {
+    if (!launch) return
+    await navigator.clipboard.writeText(launch.configJson)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
 
   const handleExport = async (): Promise<void> => {
     if (projectId === 0) return
@@ -78,12 +71,22 @@ export default function AgentPanel() {
           <strong>模型调用由 Agent 用其自身额度完成</strong>，Inkwell 只负责上下文装配、状态推进与落盘，因此零 API 花费。
         </p>
         <p className="mt-2 text-xs text-stone-500">
-          在 Agent 的 MCP 配置里加入下面这段（先执行一次 <code className="rounded bg-stone-100 px-1">npm run build</code> 生成入口文件）：
+          {launch?.mode === 'electron'
+            ? '安装版已内置运行方式：把下面这段粘贴到 Agent 的 MCP 配置即可，无需另装 Node。'
+            : '开发模式：把下面这段粘贴到 Agent 的 MCP 配置（需本机已装 Node，且已执行过 npm run build）。'}
         </p>
+        <div className="mt-2 flex items-center gap-2">
+          <button type="button" onClick={() => void handleCopy()} disabled={!launch} className={BUTTON_GHOST}>
+            {copied ? '已复制' : '复制配置'}
+          </button>
+          {launch?.mode === 'electron' && (
+            <span className="text-[11px] text-stone-400">入口：{launch.entry}</span>
+          )}
+        </div>
         <textarea
           readOnly
-          rows={8}
-          value={configSnippet}
+          rows={10}
+          value={launch?.configJson ?? '正在读取…'}
           className={`${INPUT_CLASS} mt-2 resize-none font-mono text-xs`}
           onFocus={(e) => e.currentTarget.select()}
         />

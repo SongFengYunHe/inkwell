@@ -177,10 +177,44 @@ $env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-bu
 
 #### 用外部 Agent 零成本跑完整本
 
-1. 先执行一次 `npm run build` 生成 `out/main/mcp.js`
-2. 在设置页「Agent 模式（MCP）」复制给出的 `mcpServers` 配置，粘贴到 Agent（TRAE WorkBuddy / Claude Code / Cursor）的 MCP 配置里
-3. 让 Agent 循环调用 `inkwell_next_task` → 生成 → `inkwell_save_draft`，直到 `done: true`
-4. 需要用既有设定时，可先调 `inkwell_memory` 读取七个真相文件，避免前后矛盾
+在设置页「Agent 模式（MCP）」点「复制配置」，粘贴到 Agent（TRAE WorkBuddy / Claude Code / Cursor）的 MCP 配置里，
+然后让 Agent 循环调用 `inkwell_next_task` → 生成 → `inkwell_save_draft`，直到 `done: true`；
+需要既有设定时可先调 `inkwell_memory` 读取七个真相文件。
+
+配置由应用自动生成，分两种形态：
+
+**安装版（推荐，无需另装 Node）** —— 用应用自带的 Electron 运行时执行 `app.asar` 内的入口：
+
+```json
+{
+  "mcpServers": {
+    "inkwell": {
+      "command": "<安装目录>\\Inkwell.exe",
+      "args": ["<安装目录>\\resources\\app.asar\\out\\main\\mcp.js"],
+      "env": { "ELECTRON_RUN_AS_NODE": "1" }
+    }
+  }
+}
+```
+
+> 为什么不用 `node`：安装后 `mcp.js` 在 `app.asar` 归档内，普通 Node 读不了 asar；
+> 而 Electron 以 `ELECTRON_RUN_AS_NODE=1` 启动时自带 asar 支持，等价于一个 Node 运行时。
+
+**开发版** —— 源码目录里先 `npm run build`，再指向 `out/main/mcp.js`：
+
+```json
+{ "mcpServers": { "inkwell": { "command": "node", "args": ["<仓库目录>/out/main/mcp.js"] } } }
+```
+
+**排错**：Agent 侧报 `MCP error -32000: Connection closed`，通常是入口路径不可读或运行时不对。
+先手动验证（应在 stdout 看到一行 JSON-RPC 响应）：
+
+```powershell
+# 安装版
+$env:ELECTRON_RUN_AS_NODE='1'
+'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}' |
+  & "E:\Inkwell\Inkwell.exe" "E:\Inkwell\resources\app.asar\out\main\mcp.js"
+```
 
 ## 目录结构
 

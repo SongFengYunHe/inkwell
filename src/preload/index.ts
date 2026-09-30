@@ -116,7 +116,8 @@ const api: InkwellApi = {
   },
   app: {
     dbPath: () => ipcRenderer.invoke(IpcChannel.appDbPath),
-    mcpEntry: () => ipcRenderer.invoke(IpcChannel.appMcpEntry)
+    mcpEntry: () => ipcRenderer.invoke(IpcChannel.appMcpEntry),
+    mcpLaunch: () => ipcRenderer.invoke(IpcChannel.appMcpLaunch)
   }
 }
 

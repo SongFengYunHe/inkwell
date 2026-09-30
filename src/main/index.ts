@@ -1,8 +1,9 @@
 import { join } from 'node:path'
-import { BrowserWindow, app, shell } from 'electron'
+import { BrowserWindow, app, safeStorage, shell } from 'electron'
 import { closeDatabase, initDatabase } from './db/client'
 import { markStaleRunsInterrupted } from './db/pipeline-repo'
 import { registerIpcHandlers } from './ipc'
+import { setSecretCrypto } from './security/secrets'
 import { runSmoke } from './smoke'
 import { runSmokeLlm } from './smoke-llm'
 import { runSmokeMcp } from './smoke-mcp'
@@ -57,6 +58,9 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // 注入系统级密钥加密（MCP 独立进程不注入，降级为明文标注）
+  setSecretCrypto(safeStorage)
+
   const dbFile = join(app.getPath('userData'), 'inkwell.db')
   initDatabase(dbFile)
   console.log(`[inkwell] database ready: ${dbFile}`)
