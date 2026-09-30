@@ -22,10 +22,11 @@ import {
 } from '@shared/ipc'
 import { join } from 'node:path'
 import type { GenerateEvent, PipelineEvent, PipelineRun, WizardEvent } from '@shared/types'
-import { app, ipcMain, shell, type WebContents } from 'electron'
+import { app, dialog, ipcMain, shell, type WebContents } from 'electron'
 import { exportChapterTask } from '../bridge/task-slip'
 import { getDatabasePath } from '../db/client'
 import * as repo from '../db/repositories'
+import { importVelaDatabase } from '../import/vela'
 import { getLatestReview, saveReview } from '../db/memory-repo'
 import { createRun, latestRun, updateRun } from '../db/pipeline-repo'
 import { auditChapter } from '../engine/audit'
@@ -84,6 +85,18 @@ export function registerIpcHandlers(): void {
   )
   ipcMain.handle(IpcChannel.projectRemove, (_event, id: unknown) => {
     repo.deleteProject(idSchema.parse(id))
+  })
+  ipcMain.handle(IpcChannel.projectImportVela, async () => {
+    const picked = await dialog.showOpenDialog({
+      title: '选择 Vela 工程（.vela 目录或 vela.db）',
+      properties: ['openFile', 'openDirectory'],
+      filters: [
+        { name: 'Vela 工程', extensions: ['vela', 'db', 'sqlite', 'sqlite3'] },
+        { name: '全部文件', extensions: ['*'] }
+      ]
+    })
+    if (picked.canceled || picked.filePaths.length === 0) return null
+    return importVelaDatabase(picked.filePaths[0])
   })
 
   /* --------------------------------- 细纲 --------------------------------- */

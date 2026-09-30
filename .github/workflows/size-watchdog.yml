@@ -1,0 +1,72 @@
+name: size-watchdog
+
+# 体积看门狗（计划书 §9.3 / §10 M5）
+# 门禁：安装包 ≤ 120MB；解包体积 ≤ 400MB（Electron 运行时基线约 300MB，此处用于拦截回归）
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'electron-builder.yml'
+      - 'electron.vite.config.ts'
+      - '.github/workflows/size-watchdog.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'electron-builder.yml'
+  workflow_dispatch:
+
+jobs:
+  measure:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build installer (NSIS)
+        run: npm run dist:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Report & enforce size budget
+        shell: pwsh
+        run: |
+          $installerLimitMB = 120
+          $unpackedLimitMB = 400
+
+          $setup = Get-ChildItem release -Filter '*-setup.exe' | Sort-Object Length -Descending | Select-Object -First 1
+          if (-not $setup) { throw '未找到安装包产物（release/*-setup.exe）' }
+          $installerMB = [math]::Round($setup.Length / 1MB, 1)
+
+          $dir = 'release/win-unpacked'
+          if (-not (Test-Path $dir)) { throw '未找到解包目录 release/win-unpacked' }
+          $unpackedBytes = (Get-ChildItem $dir -Recurse -File | Measure-Object -Property Length -Sum).Sum
+          $unpackedMB = [math]::Round($unpackedBytes / 1MB, 1)
+
+          $summary = @"
+          ### 体积看门狗
+          | 指标 | 实测 | 门禁 |
+          |---|---|---|
+          | 安装包 $($setup.Name) | ${installerMB} MB | ≤ ${installerLimitMB} MB |
+          | 解包体积 | ${unpackedMB} MB | ≤ ${unpackedLimitMB} MB |
+          "@
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $summary
+          Write-Host $summary
+
+          $failed = $false
+          if ($installerMB -gt $installerLimitMB) { Write-Error "安装包体积超标：${installerMB}MB > ${installerLimitMB}MB"; $failed = $true }
+          if ($unpackedMB -gt $unpackedLimitMB) { Write-Error "解包体积超标：${unpackedMB}MB > ${unpackedLimitMB}MB"; $failed = $true }
+          if ($failed) { exit 1 }

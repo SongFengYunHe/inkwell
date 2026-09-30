@@ -3,6 +3,7 @@ import AgentPanel from '../components/AgentPanel'
 import ProviderPanel from '../components/ProviderPanel'
 import RoutePanel from '../components/RoutePanel'
 import UsagePanel from '../components/UsagePanel'
+import ThemeToggle from '../components/ThemeToggle'
 import { useAppStore } from '../stores/appStore'
 
 type SettingsTab = 'official' | 'agent' | 'proxy' | 'route' | 'usage'
@@ -39,6 +40,9 @@ export default function Settings() {
         <div>
           <h1 className="text-base font-medium">设置 · 模型接入</h1>
           <p className="text-xs text-stone-400">三种接入方式可混用；密钥经系统级加密后仅存本地。</p>
+        </div>
+        <div className="ml-auto">
+          <ThemeToggle />
         </div>
       </header>
 

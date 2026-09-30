@@ -14,7 +14,7 @@ function countWords(text: string): number {
   return text.replace(/\s/g, '').length
 }
 
-export default function DraftPanel() {
+export default function DraftPanel({ focus = false }: { focus?: boolean }) {
   const activeProjectId = useAppStore((s) => s.activeProjectId)
   const briefs = useAppStore((s) => s.briefs)
   const drafts = useAppStore((s) => s.drafts)
@@ -34,6 +34,8 @@ export default function DraftPanel() {
   const fixCurrent = useAppStore((s) => s.fixCurrent)
   const fixResult = useAppStore((s) => s.fixResult)
   const clearFixResult = useAppStore((s) => s.clearFixResult)
+
+  const toggleFocusMode = useAppStore((s) => s.toggleFocusMode)
 
   const brief = briefs.find((item) => item.chapterNo === currentChapterNo) ?? null
   const versions = useMemo(
@@ -68,6 +70,36 @@ export default function DraftPanel() {
 
   const runMode = (mode: GenerationMode): void => {
     void generate(mode)
+  }
+
+  // 专注模式：隐藏全部工具栏与提示，只留正文（计划书 §8.3）
+  if (focus) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        {isStreamingHere ? (
+          <div
+            ref={streamRef}
+            className="reader-body flex-1 overflow-y-auto rounded-xl border border-stone-200 bg-white p-8 text-[16px] leading-9 whitespace-pre-wrap text-stone-800 shadow-sm"
+          >
+            {streamText || '等待模型返回…'}
+          </div>
+        ) : current ? (
+          <textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            spellCheck={false}
+            className="reader-body flex-1 resize-none rounded-xl border border-stone-200 bg-white p-8 text-[16px] leading-9 text-stone-800 shadow-sm outline-none"
+          />
+        ) : (
+          <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-stone-300 text-sm text-stone-400">
+            本章还没有正文
+          </div>
+        )}
+        <p className="pt-2 text-center text-[11px] text-stone-400">
+          {countWords(isStreamingHere ? streamText : content)} 字 · 专注模式
+        </p>
+      </div>
+    )
   }
 
   return (
@@ -124,6 +156,9 @@ export default function DraftPanel() {
           className={BUTTON_GHOST}
         >
           一键修复
+        </button>
+        <button type="button" onClick={() => toggleFocusMode()} className={BUTTON_GHOST}>
+          专注
         </button>
 
         {generating !== null && (

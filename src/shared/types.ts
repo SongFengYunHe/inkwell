@@ -513,6 +513,17 @@ export interface ExportResult {
   skippedChapters: number[]
 }
 
+/* ============================ M5：导入 Vela 工程 ============================ */
+
+/** 导入 Vela 工程的结果 */
+export interface VelaImportSummary {
+  project: Project
+  briefs: number
+  drafts: number
+  /** 识别到的源表名，便于排查映射问题 */
+  tables: string[]
+}
+
 /** 预加载脚本向渲染进程暴露的 API 契约 */
 export interface InkwellApi {
   project: {
@@ -521,6 +532,8 @@ export interface InkwellApi {
     create(input: ProjectCreateInput): Promise<Project>
     update(input: ProjectUpdateInput): Promise<Project>
     remove(id: number): Promise<void>
+    /** 打开文件对话框并导入 Vela 工程；用户取消时返回 null */
+    importVela(): Promise<VelaImportSummary | null>
   }
   brief: {
     list(projectId: number): Promise<ChapterBrief[]>

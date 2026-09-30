@@ -1,0 +1,60 @@
+# electron-builder 打包配置（计划书 §9.3 体积瘦身）
+# 产物统一落到 release/（该目录已在 .gitignore 中忽略）
+appId: com.inkwell.app
+productName: Inkwell
+copyright: Copyright © 2026 Inkwell
+
+directories:
+  output: release
+  buildResources: build
+
+# 只打包运行时真正需要的内容：编译产物 + 包描述；生产依赖由 electron-builder 自动纳入
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+  - '!**/*.ts'
+  - '!**/{.eslintrc,.editorconfig,.gitignore,.gitattributes}'
+  - '!**/{README.md,CHANGELOG.md,LICENSE,license,LICENCE}'
+  # 体积瘦身：better-sqlite3 只保留 win32-x64 的预编译二进制
+  - '!node_modules/better-sqlite3/deps/**'
+  - '!node_modules/better-sqlite3/src/**'
+  - '!node_modules/better-sqlite3/build/**'
+  - '!node_modules/better-sqlite3/prebuilds/darwin-*'
+  - '!node_modules/better-sqlite3/prebuilds/linux-*'
+  - '!node_modules/better-sqlite3/prebuilds/linuxmusl-*'
+  - '!node_modules/better-sqlite3/prebuilds/win32-arm64.node'
+
+# 只保留中英文语言包（默认 55 个，占约 48MB）
+electronLanguages:
+  - zh-CN
+  - en-US
+
+asar: true
+# 原生模块（better-sqlite3）不能进 asar，必须解包
+asarUnpack:
+  - '**/*.node'
+
+compression: maximum
+removePackageScripts: true
+# better-sqlite3 是 N-API 模块（ABI 稳定，Node 与 Electron 共用同一份二进制），
+# 无需按 Electron 版本重编译，也避免打包时联网拉取 Electron headers。
+npmRebuild: false
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-${arch}-setup.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Inkwell
+  # 不做增量包，避免依赖上一次发布产物
+  differentialPackage: false
+  artifactName: ${productName}-${version}-${arch}-setup.${ext}

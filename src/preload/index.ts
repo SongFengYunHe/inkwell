@@ -27,7 +27,8 @@ const api: InkwellApi = {
     get: (id: number) => ipcRenderer.invoke(IpcChannel.projectGet, id),
     create: (input: ProjectCreateInput) => ipcRenderer.invoke(IpcChannel.projectCreate, input),
     update: (input: ProjectUpdateInput) => ipcRenderer.invoke(IpcChannel.projectUpdate, input),
-    remove: (id: number) => ipcRenderer.invoke(IpcChannel.projectRemove, id)
+    remove: (id: number) => ipcRenderer.invoke(IpcChannel.projectRemove, id),
+    importVela: () => ipcRenderer.invoke(IpcChannel.projectImportVela)
   },
   brief: {
     list: (projectId: number) => ipcRenderer.invoke(IpcChannel.briefList, projectId),

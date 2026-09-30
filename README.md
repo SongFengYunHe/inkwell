@@ -52,6 +52,18 @@
 - **导出 TXT / MD / DOCX / EPUB**：按卷分章、自动生成目录；未写章节自动跳过并提示；导出目录默认落在「文档 / Inkwell 导出 / 书名」，可一键打开
 - **零新增依赖**：DOCX 与 EPUB 的 ZIP 容器由内置写入器生成
 
+**M5 · 打磨与增强 —— 已完成**
+
+- **深浅双主题**：顶栏一键切换，选择持久化到本地；首次启动跟随系统偏好
+- **专注模式**：正文工具栏点「专注」，隐藏顶栏 / 章节导航 / Tab / 提示，只留正文与字数
+- **克制动效与空状态引导**：面板与对话框入场淡入；书架空状态给出三步上手引导
+- **题材模板扩充至 30 种**：新建项目选题材自动带出推荐章数与文风建议
+- **导入 Vela 工程**：书架「导入 Vela 工程」→ 选 `.vela` 目录或 `vela.db`，按表名与列名容错映射（`project_core` / `blueprints` / `drafts`），导入后可直接继续写作
+- **打包与体积**：`electron-builder` NSIS 安装包输出到 `release/`；只保留中英文语言包与 win32-x64 原生二进制，安装包 **≈105MB**（目标 ≤120MB）
+- **CI 体积看门狗**：GitHub Actions 构建后核对安装包与解包体积，超标即失败
+
+> 说明：安装后目录约 340MB，其中 Electron 44 运行时（exe + 共享库）约占 300MB，属框架基线；长期降体积的路径是迁移 Tauri（见计划书 §9.3）。
+
 ## 技术栈
 
 | 层 | 选型 |
@@ -75,6 +87,8 @@ npm run smoke:llm    # 构建并跑一次「细纲 → 流式生成 → 落盘�
 npm run smoke:mcp    # 构建并以真实 MCP 协议拉起 MCP Server，模拟 Agent 自动写完 5 章
 npm run smoke:m3     # 构建并跑一次 M3 端到端自检（连写整本 / 记忆回写 / 断点续跑 / Steer）
 npm run smoke:m4     # 构建并跑一次 M4 端到端自检（一键修复闭环 / 四种格式导出）
+npm run smoke:m5     # 构建并跑一次 M5 自检（导入 Vela 工程 → 继续写作）
+npm run dist:win     # 打包 Windows 安装包到 release/（NSIS）
 ```
 
 > **国内网络**：若 `npm install` 后 Electron 二进制下载失败，先设置镜像再重试：
@@ -127,6 +141,27 @@ npx electron . --smoke-m4
 #   全部通过时输出 M4_EXPORT_OK
 ```
 
+### Vela 工程导入自检
+
+```powershell
+npx electron . --smoke-m5
+# 造一个 Vela 形态的库（project_core / blueprints / drafts）→ 导入 → 校验字段映射
+#   → 装配上下文 → 在导入的项目上继续写作 → M5_VELA_OK
+```
+
+### 打包（Windows）
+
+```powershell
+npm run dist:win        # 产物落在 release/（已在 .gitignore 中忽略）
+npm run pack:dir        # 只出解包目录，便于快速验证
+
+# 国内网络若拉取 electron-builder 依赖较慢，可先设置镜像：
+$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'
+$env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'
+```
+
+> `release/` 属于构建产物，不入库；安装包约 105MB。
+
 ### 上手流程
 
 1. 书架右上「设置」→「官方 API」填 Base URL / 模型名 / API Key →「测试连接」→「保存」
@@ -137,6 +172,8 @@ npx electron . --smoke-m4
 6. 想整本自动写：点顶栏「从第 N 章连写整本」；运行中可「暂停 / 跳过本章 / 停止」，也能下发 Steer 要求
 7. 「记忆」Tab 查看七个真相文件与每章审计报告；误删了记忆可点「从正文重建记忆」
 8. 顶栏「导出」选择 TXT / MD / DOCX / EPUB，一键成书（分卷 + 目录）
+9. 顶栏可切换**深浅主题**；正文点「专注」进入沉浸写作
+10. 已有 Vela 工程：书架点「导入 Vela 工程」，导入后直接接着写
 
 #### 用外部 Agent 零成本跑完整本
 
@@ -156,9 +193,11 @@ src/
 │  ├─ smoke-mcp.ts       # --smoke-mcp MCP 协议自检
 │  ├─ smoke-m3.ts        # --smoke-m3 连写/记忆/断点续跑自检
 │  ├─ smoke-m4.ts        # --smoke-m4 一键修复 / 四种格式导出自检
+│  ├─ smoke-m5.ts        # --smoke-m5 导入 Vela 工程自检
 │  ├─ db/                # schema / migrations / client / repositories / memory / pipeline
 │  ├─ engine/            # 确定性引擎：truth(真相文件) / audit(审计) / memory(回写) / rules(去AI味) / fix(一键修复) / pipeline / run(连写队列)
 │  ├─ export/            # 导出引擎：TXT / MD / DOCX / EPUB + 内置 ZIP 写入器
+│  ├─ import/            # 导入引擎：Vela 工程（.vela/vela.db）映射
 │  ├─ providers/         # ChatProvider 抽象 + OpenAI 兼容实现 + 接入配置
 │  ├─ llm/               # invoke(路由+记账) / route / usage / context / generate / wizard / brief
 │  ├─ mcp/               # MCP Server（stdio）入口与工具实现
@@ -169,10 +208,14 @@ src/
 ├─ preload/              # contextBridge 白名单 API
 ├─ renderer/src/
 │  ├─ pages/             # 书架 / 工作区 / 设置
-│  ├─ components/        # 章节导航 / 细纲 / 大纲 / 正文 / 记忆 / 连写控制条 / 导出对话框 / 设置各面板
+│  ├─ components/        # 章节导航 / 细纲 / 大纲 / 正文 / 记忆 / 连写控制条 / 导出对话框 / 主题切换 / 设置各面板
+│  ├─ data/              # 题材模板（30 种）
 │  └─ stores/            # zustand
 └─ shared/               # 跨进程共享的类型与 IPC 契约
 scripts/                 # Git 每轮提交与安全回滚脚本
+electron-builder.yml     # 打包配置（NSIS → release/）
+.github/workflows/       # CI 体积看门狗
+LICENSE                  # MIT
 ```
 
 ## Git 工作流：每轮自动提交 + 安全回滚
@@ -195,4 +238,7 @@ git tag -l "snapshot/*" --sort=-creatordate
 
 ## 许可
 
-待定
+本项目以 [MIT License](LICENSE) 发布。
+
+参考项目（Vela、AI-Novel-Writing-Assistant、InkOS、ainovel-cli、WebNovel Writer 等）仅借鉴设计思路，
+未复制其源码；相关权利归各自作者所有。

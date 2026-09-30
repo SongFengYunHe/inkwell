@@ -7,6 +7,7 @@ export const IpcChannel = {
   projectCreate: 'project:create',
   projectUpdate: 'project:update',
   projectRemove: 'project:remove',
+  projectImportVela: 'project:import-vela',
   briefList: 'brief:list',
   briefSave: 'brief:save',
   briefRemove: 'brief:remove',

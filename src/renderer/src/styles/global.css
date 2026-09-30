@@ -1,5 +1,8 @@
 @import 'tailwindcss';
 
+/* 深色主题采用 class 策略（html.dark），便于用户手动切换 */
+@custom-variant dark (&:where(.dark, .dark *));
+
 html,
 body,
 #root {
@@ -17,4 +20,186 @@ body {
   font-family: 'Songti SC', 'SimSun', 'Source Han Serif SC', serif;
   line-height: 1.9;
   letter-spacing: 0.01em;
+}
+
+/* 克制动效：只用于面板/对话框入场 */
+@keyframes ink-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-fade-in {
+  animation: ink-fade-in 0.18s ease-out both;
+}
+
+@keyframes ink-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-fade {
+  animation: ink-fade 0.18s ease-out both;
+}
+
+/* 细滚动条，深浅色自适应 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d6d3d1 transparent;
+}
+
+.dark * {
+  scrollbar-color: #4a4541 transparent;
+}
+
+/*
+ * 深色主题：应用现有组件大量使用 stone/amber 语义色，
+ * 这里在 .dark 作用域内统一重映射，避免逐个组件改类名。
+ * 未分层的规则优先级高于 Tailwind 的 utilities 层，无需 !important。
+ */
+.dark {
+  color-scheme: dark;
+}
+
+.dark body {
+  background-color: #191716;
+  color: #e7e5e4;
+}
+
+/* 表面 */
+.dark .bg-white {
+  background-color: #24211f;
+}
+.dark .bg-stone-50 {
+  background-color: #1f1d1b;
+}
+.dark .bg-stone-50\/60 {
+  background-color: rgba(31, 29, 27, 0.6);
+}
+.dark .bg-stone-100 {
+  background-color: #1f1d1b;
+}
+.dark .bg-stone-200 {
+  background-color: #332f2c;
+}
+.dark .bg-stone-300 {
+  background-color: #4a4541;
+}
+.dark .bg-stone-900 {
+  background-color: #3f3b39;
+}
+
+/* 文字 */
+.dark .text-stone-900 {
+  color: #f5f5f4;
+}
+.dark .text-stone-800 {
+  color: #e7e5e4;
+}
+.dark .text-stone-700 {
+  color: #d6d3d1;
+}
+.dark .text-stone-600 {
+  color: #c9c5c1;
+}
+.dark .text-stone-500 {
+  color: #a8a29e;
+}
+.dark .text-stone-400 {
+  color: #8f8a85;
+}
+
+/* 描边 */
+.dark .border-stone-100 {
+  border-color: #322e2b;
+}
+.dark .border-stone-200 {
+  border-color: #3a3633;
+}
+.dark .border-stone-300 {
+  border-color: #4a4541;
+}
+
+/* 语义色：状态与提示 */
+.dark .bg-amber-50 {
+  background-color: #3a2e15;
+}
+.dark .bg-amber-50\/50 {
+  background-color: rgba(58, 46, 21, 0.5);
+}
+.dark .bg-amber-100 {
+  background-color: #4a3a1a;
+}
+.dark .bg-red-50 {
+  background-color: #3b1e1e;
+}
+.dark .bg-red-100 {
+  background-color: #4a2424;
+}
+.dark .bg-emerald-50 {
+  background-color: #14301f;
+}
+
+.dark .text-amber-600 {
+  color: #fbbf24;
+}
+.dark .text-amber-700 {
+  color: #fcd34d;
+}
+.dark .text-amber-800 {
+  color: #fde68a;
+}
+.dark .text-emerald-600 {
+  color: #6ee7b7;
+}
+.dark .text-emerald-700 {
+  color: #6ee7b7;
+}
+.dark .text-emerald-800 {
+  color: #a7f3d0;
+}
+.dark .text-red-600 {
+  color: #fca5a5;
+}
+.dark .text-red-700 {
+  color: #fca5a5;
+}
+
+.dark .border-amber-200 {
+  border-color: #5a4620;
+}
+.dark .border-amber-300 {
+  border-color: #6b5320;
+}
+.dark .border-red-200 {
+  border-color: #5a2a2a;
+}
+.dark .border-emerald-200 {
+  border-color: #1f4a33;
+}
+
+/* hover 态 */
+.dark .hover\:bg-stone-50:hover {
+  background-color: #26231f;
+}
+.dark .hover\:bg-stone-700:hover {
+  background-color: #57534e;
+}
+.dark .hover\:bg-white\/70:hover {
+  background-color: rgba(36, 33, 31, 0.7);
+}
+.dark .hover\:bg-red-50:hover {
+  background-color: #3b1e1e;
+}
+.dark .hover\:bg-red-100:hover {
+  background-color: #4a2424;
 }

@@ -9,6 +9,9 @@ export default function App() {
   const activeProjectId = useAppStore((s) => s.activeProjectId)
   const error = useAppStore((s) => s.error)
   const clearError = useAppStore((s) => s.clearError)
+  const notice = useAppStore((s) => s.notice)
+  const clearNotice = useAppStore((s) => s.clearNotice)
+  const theme = useAppStore((s) => s.theme)
   const loadProjects = useAppStore((s) => s.loadProjects)
   const handleGenerateEvent = useAppStore((s) => s.handleGenerateEvent)
   const handleWizardEvent = useAppStore((s) => s.handleWizardEvent)
@@ -17,6 +20,11 @@ export default function App() {
   useEffect(() => {
     void loadProjects()
   }, [loadProjects])
+
+  // 深浅主题：切换 <html> 上的 dark 类（颜色由 global.css 统一重映射）
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark')
+  }, [theme])
 
   // 订阅主进程的流式生成事件（StrictMode 下会订阅-退订-再订阅，无副作用）
   useEffect(() => {
@@ -46,6 +54,15 @@ export default function App() {
         <div className="flex items-center justify-between gap-4 border-b border-red-200 bg-red-50 px-5 py-2 text-sm text-red-700">
           <span>{error}</span>
           <button type="button" onClick={clearError} className="rounded px-2 py-0.5 hover:bg-red-100">
+            关闭
+          </button>
+        </div>
+      )}
+      {/* 工作区已有自己的 notice 展示，这里只在其他页面兜底显示 */}
+      {notice && view !== 'workspace' && (
+        <div className="flex items-center justify-between gap-4 border-b border-emerald-200 bg-emerald-50 px-5 py-2 text-sm text-emerald-800">
+          <span>{notice}</span>
+          <button type="button" onClick={clearNotice} className="rounded px-2 py-0.5 hover:bg-emerald-100/60">
             关闭
           </button>
         </div>

@@ -32,6 +32,17 @@ import { create } from 'zustand'
 
 export type View = 'bookshelf' | 'workspace' | 'settings'
 
+export type Theme = 'light' | 'dark'
+
+const THEME_KEY = 'inkwell.theme'
+
+/** 首次启动时跟随系统偏好，之后以用户选择为准 */
+function initialTheme(): Theme {
+  const saved = localStorage.getItem(THEME_KEY)
+  if (saved === 'light' || saved === 'dark') return saved
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
 interface GeneratingState {
   requestId: string
   chapterNo: number
@@ -84,14 +95,25 @@ interface AppState {
   fixResult: FixResult | null
   /** M4：最近一次导出结果 */
   exportResult: ExportResult | null
+  /** M5：深浅主题 */
+  theme: Theme
+  /** M5：专注模式（隐藏所有 chrome，只留正文） */
+  focusMode: boolean
+
+  setTheme: (theme: Theme) => void
+  toggleTheme: () => void
+  setFocusMode: (on: boolean) => void
+  toggleFocusMode: () => void
 
   setView: (view: View) => void
   clearError: () => void
   clearNotice: () => void
 
   loadProjects: () => Promise<void>
-  createProject: (input: ProjectCreateInput) => Promise<void>
+  createProject: (input: ProjectCreateInput & { style?: string }) => Promise<void>
   removeProject: (id: number) => Promise<void>
+  /** M5：导入 Vela 工程并直接打开 */
+  importVelaProject: () => Promise<void>
   openProject: (id: number) => Promise<void>
   backToBookshelf: () => void
   updateProject: (input: ProjectUpdateInput) => Promise<void>
@@ -196,6 +218,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   audit: null,
   fixResult: null,
   exportResult: null,
+  theme: initialTheme(),
+  focusMode: false,
+
+  setTheme: (theme) => {
+    localStorage.setItem(THEME_KEY, theme)
+    set({ theme })
+  },
+  toggleTheme: () => {
+    const theme: Theme = get().theme === 'dark' ? 'light' : 'dark'
+    localStorage.setItem(THEME_KEY, theme)
+    set({ theme })
+  },
+  setFocusMode: (on) => set({ focusMode: on }),
+  toggleFocusMode: () => set({ focusMode: !get().focusMode }),
 
   setView: (view) => set({ view }),
   clearError: () => set({ error: null }),
@@ -207,8 +243,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   createProject: async (input) => {
-    const created = await guard(set, () => window.inkwell.project.create(input))
+    const { style, ...create } = input
+    const created = await guard(set, () => window.inkwell.project.create(create))
     if (!created) return
+    if (style?.trim()) {
+      const updated = await guard(set, () => window.inkwell.project.update({ id: created.id, style: style.trim() }))
+      if (updated) created.style = updated.style
+    }
     set({ projects: [created, ...get().projects] })
     await get().openProject(created.id)
     // 填了灵感就立刻让 AI 出设定、大纲与细纲（计划书 §8.1）
@@ -219,6 +260,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     await guard(set, () => window.inkwell.project.remove(id))
     if (get().activeProjectId === id) set({ activeProjectId: null, briefs: [], drafts: [] })
     await get().loadProjects()
+  },
+
+  importVelaProject: async () => {
+    const summary = await guard(set, () => window.inkwell.project.importVela())
+    if (!summary) return
+    await get().loadProjects()
+    await get().openProject(summary.project.id)
+    set({ notice: `已导入「${summary.project.name}」：细纲 ${summary.briefs} 章 · 正文 ${summary.drafts} 章` })
   },
 
   openProject: async (id) => {

@@ -1,51 +1,63 @@
 import { useState, type FormEvent } from 'react'
+import ThemeToggle from '../components/ThemeToggle'
+import { GENRE_TEMPLATES, findGenreTemplate } from '../data/genres'
 import { useAppStore } from '../stores/appStore'
-
-const GENRES = [
-  '玄幻',
-  '仙侠',
-  '都市',
-  '科幻',
-  '历史',
-  '悬疑',
-  '言情',
-  '奇幻',
-  '游戏',
-  '武侠',
-  '末世',
-  '无限流'
-]
 
 export default function Bookshelf() {
   const projects = useAppStore((s) => s.projects)
   const loading = useAppStore((s) => s.loading)
   const createProject = useAppStore((s) => s.createProject)
+  const importVelaProject = useAppStore((s) => s.importVelaProject)
   const openProject = useAppStore((s) => s.openProject)
   const removeProject = useAppStore((s) => s.removeProject)
   const setView = useAppStore((s) => s.setView)
 
   const [name, setName] = useState('')
-  const [genre, setGenre] = useState(GENRES[0])
-  const [totalChapters, setTotalChapters] = useState(50)
+  const [genre, setGenre] = useState(GENRE_TEMPLATES[0].name)
+  const [totalChapters, setTotalChapters] = useState(GENRE_TEMPLATES[0].chapters)
   const [premise, setPremise] = useState('')
+
+  const template = findGenreTemplate(genre)
+
+  const handleGenreChange = (value: string): void => {
+    setGenre(value)
+    const next = findGenreTemplate(value)
+    // 换题材时带出该题材的推荐章数与文风
+    if (next) setTotalChapters(next.chapters)
+  }
 
   const handleCreate = async (event: FormEvent) => {
     event.preventDefault()
     if (!name.trim()) return
-    await createProject({ name: name.trim(), genre, totalChapters, premise: premise.trim() })
+    await createProject({
+      name: name.trim(),
+      genre,
+      totalChapters,
+      premise: premise.trim(),
+      style: template?.style
+    })
     setName('')
     setPremise('')
   }
 
   return (
     <div className="mx-auto flex h-full w-full max-w-6xl flex-col gap-8 px-8 py-10">
-      <header className="flex items-end justify-between">
+      <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">书架</h1>
           <p className="mt-1 text-sm text-stone-500">只需一句话灵感，即可开始一部长篇。</p>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-stone-400">{loading ? '加载中…' : `共 ${projects.length} 个项目`}</span>
+        <div className="flex items-center gap-2">
+          <span className="mr-1 text-xs text-stone-400">{loading ? '加载中…' : `共 ${projects.length} 个项目`}</span>
+          <button
+            type="button"
+            onClick={() => void importVelaProject()}
+            disabled={loading}
+            className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm text-stone-600 transition hover:bg-stone-50 disabled:opacity-40"
+          >
+            导入 Vela 工程
+          </button>
+          <ThemeToggle />
           <button
             type="button"
             onClick={() => setView('settings')}
@@ -74,18 +86,19 @@ export default function Bookshelf() {
           </label>
 
           <label className="flex flex-col gap-1.5">
-            <span className="text-xs text-stone-500">题材</span>
+            <span className="text-xs text-stone-500">题材（{GENRE_TEMPLATES.length} 种模板）</span>
             <select
               value={genre}
-              onChange={(e) => setGenre(e.target.value)}
+              onChange={(e) => handleGenreChange(e.target.value)}
               className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm outline-none focus:border-amber-500"
             >
-              {GENRES.map((item) => (
-                <option key={item} value={item}>
-                  {item}
+              {GENRE_TEMPLATES.map((item) => (
+                <option key={item.name} value={item.name}>
+                  {item.name}
                 </option>
               ))}
             </select>
+            {template && <span className="text-[11px] text-stone-400">文风建议：{template.style}</span>}
           </label>
 
           <label className="flex flex-col gap-1.5">
@@ -125,9 +138,14 @@ export default function Bookshelf() {
 
         <section className="overflow-y-auto pr-1">
           {projects.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-stone-300 text-stone-400">
-              <p className="text-sm">还没有项目</p>
-              <p className="text-xs">在左侧填写书名，点「创建并进入」</p>
+            <div className="flex h-full flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-stone-300 px-6 text-center text-stone-400">
+              <p className="text-sm text-stone-500">还没有项目，三步即可开写</p>
+              <ol className="space-y-1 text-xs leading-5">
+                <li>1. 左侧填书名、选题材、写一句灵感</li>
+                <li>2. 点「创建并由 AI 生成大纲」，自动得到设定 + 总大纲 + 逐章细纲</li>
+                <li>3. 进工作区点「连写整本」，或逐章「生成正文」</li>
+              </ol>
+              <p className="text-xs text-stone-400">已有 Vela 工程？点右上「导入 Vela 工程」继续写。</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">

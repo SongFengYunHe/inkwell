@@ -6,6 +6,7 @@ import ExportDialog from '../components/ExportDialog'
 import MemoryPanel from '../components/MemoryPanel'
 import OutlinePanel from '../components/OutlinePanel'
 import PipelineBar from '../components/PipelineBar'
+import ThemeToggle from '../components/ThemeToggle'
 import WizardBanner from '../components/WizardBanner'
 import { useAppStore } from '../stores/appStore'
 
@@ -24,8 +25,11 @@ export default function Workspace() {
   const briefs = useAppStore((s) => s.briefs)
   const drafts = useAppStore((s) => s.drafts)
   const loading = useAppStore((s) => s.loading)
+  const currentChapterNo = useAppStore((s) => s.currentChapterNo)
   const backToBookshelf = useAppStore((s) => s.backToBookshelf)
   const setView = useAppStore((s) => s.setView)
+  const focusMode = useAppStore((s) => s.focusMode)
+  const setFocusMode = useAppStore((s) => s.setFocusMode)
 
   const [tab, setTab] = useState<Tab>('brief')
   const [exportOpen, setExportOpen] = useState(false)
@@ -36,6 +40,31 @@ export default function Workspace() {
   }
 
   const writtenChapters = new Set(drafts.filter((item) => item.content.trim()).map((item) => item.chapterNo)).size
+
+  // 专注模式（M5）：只保留正文，隐藏顶栏 / 章节导航 / Tab / 提示
+  if (focusMode) {
+    return (
+      <div className="flex h-full min-h-0 flex-col bg-stone-100 px-6 py-5">
+        <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <span className="truncate text-xs text-stone-400">
+              {project.name} · 第 {currentChapterNo} 章
+            </span>
+            <button
+              type="button"
+              onClick={() => setFocusMode(false)}
+              className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs text-stone-600 transition hover:bg-stone-50"
+            >
+              退出专注
+            </button>
+          </div>
+          <div className="min-h-0 flex-1">
+            <DraftPanel focus />
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -56,6 +85,7 @@ export default function Workspace() {
         </div>
         <div className="ml-auto flex items-center gap-3">
           <span className="text-xs text-stone-400">{loading ? '处理中…' : ''}</span>
+          <ThemeToggle />
           <button
             type="button"
             onClick={() => setExportOpen(true)}
