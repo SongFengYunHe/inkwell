@@ -27,7 +27,11 @@ import type {
   PipelineEvent,
   PipelineRun,
   TruthFiles,
-  LibraryBootstrap
+  LibraryBootstrap,
+  BriefFieldKey,
+  ImportEvent,
+  ImportSession,
+  ImportUpdateItemInput
 } from '@shared/types'
 import { create } from 'zustand'
 
@@ -153,7 +157,7 @@ interface AppState {
   loadUsage: () => Promise<void>
   exportTask: (projectId: number, chapterNo: number) => Promise<BridgeTaskExport | null>
   /** 任务单桥：把外部 Agent 产出的文本存为本章新版本 */
-  importDraft: (projectId: number, chapterNo: number, text: string) => Promise<ChapterDraft | null>
+  importDraft: (projectId: number, chapterNo: number, text: string, source?: string) => Promise<ChapterDraft | null>
 
   generate: (mode: GenerationMode) => Promise<void>
   abortGeneration: () => Promise<void>
@@ -188,6 +192,35 @@ interface AppState {
   runExport: (formats: ExportFormat[]) => Promise<void>
   openExportDir: (path: string) => Promise<void>
   clearExportResult: () => void
+
+  /* ----------------------------- M7：内容导入 ----------------------------- */
+  /** 当前导入会话（非空时展示差异预览页） */
+  importSession: ImportSession | null
+  /** 解析中的进度文案 */
+  importProgress: string | null
+  /** 从文件路径 / 粘贴文本发起解析并打开差异预览 */
+  openImportReview: (input: {
+    path?: string
+    text?: string
+    kind?: string
+    projectId?: number
+    useLlm?: boolean
+  }) => Promise<ImportSession | null>
+  /** 改单条 action / enabled */
+  updateImportItem: (input: ImportUpdateItemInput) => Promise<void>
+  /** 重跑体检 */
+  revalidateImport: (requiredFields?: BriefFieldKey[]) => Promise<void>
+  /** 仅导入选中项 */
+  commitImport: () => Promise<boolean>
+  cancelImport: () => Promise<void>
+  closeImportReview: () => void
+  handleImportEvent: (event: ImportEvent) => void
+  /** 拖拽落点路由（按扩展开与页面位置分流） */
+  dropImport: (path: string, target: string) => Promise<void>
+  /** 书架空白区：新建项目（预填标题）后进入导入预览（文件或粘贴文本） */
+  createProjectFromImport: (input: { path?: string; text?: string }) => Promise<void>
+  /** 「正文」Tab：作为当前章草稿新版本导入 */
+  importDraftFromPath: (path: string) => Promise<void>
 
   /* ----------------------------- M6：书库与撤销 ----------------------------- */
   loadBootstrap: () => Promise<void>
@@ -244,6 +277,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   bootstrap: null,
   migrationOpen: false,
   undo: null,
+  importSession: null,
+  importProgress: null,
 
   setTheme: (theme) => {
     localStorage.setItem(THEME_KEY, theme)
@@ -470,7 +505,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     return result ?? null
   },
 
-  importDraft: async (projectId, chapterNo, text) => {
+  importDraft: async (projectId, chapterNo, text, source) => {
     const saved = await guard(set, async () => {
       const drafts = await window.inkwell.draft.list(projectId)
       const versions = drafts.filter((item) => item.chapterNo === chapterNo)
@@ -480,7 +515,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         chapterNo,
         version: nextVersion,
         status: 'draft',
-        source: 'write',
+        source: source ?? 'write',
         content: text
       })
     })
@@ -788,6 +823,109 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   clearExportResult: () => set({ exportResult: null }),
+
+  /* ----------------------------- M7：内容导入 ----------------------------- */
+
+  openImportReview: async (input) => {
+    const session = await guard(set, () => window.inkwell.import.analyze(input))
+    if (!session) return null
+    set({ importSession: session, importProgress: null })
+    return session
+  },
+
+  updateImportItem: async (input) => {
+    const session = await guard(set, () => window.inkwell.import.updateItem(input))
+    if (session) set({ importSession: session })
+  },
+
+  revalidateImport: async (requiredFields) => {
+    const current = get().importSession
+    if (!current) return
+    const session = await guard(set, () =>
+      window.inkwell.import.validate({ sessionId: current.id, requiredFields })
+    )
+    if (session) set({ importSession: session })
+  },
+
+  commitImport: async () => {
+    const current = get().importSession
+    if (!current) return false
+    if (current.projectId === null) {
+      set({ error: '请选择目标项目后再导入' })
+      return false
+    }
+    const result = await guard(set, () => window.inkwell.import.commit(current.id))
+    if (!result) return false
+    set({ importSession: null, importProgress: null })
+    await get().reloadBriefs()
+    await get().loadProjects()
+    set({ notice: `已仅导入选中项，共写入 ${result.committed} 章细纲` })
+    return true
+  },
+
+  cancelImport: async () => {
+    const current = get().importSession
+    if (!current) return
+    await guard(set, () => window.inkwell.import.cancel(current.id))
+    set({ importSession: null, importProgress: null })
+  },
+
+  closeImportReview: () => set({ importSession: null, importProgress: null }),
+
+  handleImportEvent: (event) => {
+    if (event.type === 'progress') set({ importProgress: event.progress.message })
+  },
+
+  dropImport: async (path, target) => {
+    const ext = path.toLowerCase().split('.').pop() ?? ''
+    if (['vela', 'db', 'sqlite', 'sqlite3'].includes(ext)) {
+      set({ notice: 'Vela 工程 / 数据库请使用「导入 Vela 项目」或书库挂载' })
+      return
+    }
+    if (target.startsWith('project-card:')) {
+      const id = Number(target.slice('project-card:'.length))
+      await get().openImportReview({ path, projectId: Number.isFinite(id) ? id : undefined })
+      return
+    }
+    if (target === 'outline') {
+      await get().openImportReview({ path, projectId: get().activeProjectId ?? undefined })
+      return
+    }
+    if (target === 'draft') {
+      await get().importDraftFromPath(path)
+      return
+    }
+    if (target === 'cover') {
+      set({ notice: '暂不支持拖入图片设置封面' })
+      return
+    }
+    // 书架空白区：新建项目（预填标题）后进入大纲分层解析
+    await get().createProjectFromImport({ path })
+  },
+
+  createProjectFromImport: async (input) => {
+    const preview = await guard(set, () => window.inkwell.import.analyze(input))
+    if (!preview) return
+    const firstChapter = preview.tree.volumes.flatMap((volume) => volume.chapters)[0]
+    const baseName = input.path?.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '粘贴导入的项目'
+    const name = (firstChapter?.title || baseName).slice(0, 60)
+    const created = await guard(set, () => window.inkwell.project.create({ name }))
+    if (!created) return
+    // 关掉无项目会话，重新按新项目解析（差异预览需要 projectId）
+    set({ importSession: null })
+    await get().openProject(created.id)
+    await get().openImportReview({ ...input, projectId: created.id })
+  },
+
+  importDraftFromPath: async (path) => {
+    const projectId = get().activeProjectId
+    if (projectId === null) return
+    const session = await guard(set, () => window.inkwell.import.analyze({ path, projectId }))
+    if (!session) return
+    const chapterNo = get().currentChapterNo
+    await get().importDraft(projectId, chapterNo, session.rawText ?? '', 'import')
+    set({ notice: `已把文件内容作为第 ${chapterNo} 章草稿新版本导入` })
+  },
 
   /* ----------------------------- M6：书库与撤销 ----------------------------- */
 

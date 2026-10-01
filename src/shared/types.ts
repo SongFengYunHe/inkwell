@@ -662,6 +662,189 @@ export interface LibrarySettings {
   autoBackup: boolean
 }
 
+/* ============================ M7：内容导入与解析 ============================ */
+
+/** 章内可抽取字段（与 chapter_brief 对齐） */
+export type BriefFieldKey =
+  | 'purpose'
+  | 'keyEvents'
+  | 'characters'
+  | 'suspenseHook'
+  | 'sceneBeats'
+  | 'userGuidance'
+  | 'notes'
+
+/** 抽取出的字段值；heuristic=true 表示未命中标签、由启发式归类（预览标黄） */
+export interface ParsedFieldValue {
+  value: string
+  heuristic: boolean
+}
+
+export type ParsedFields = Record<BriefFieldKey, ParsedFieldValue>
+
+/** 解析出的单章 */
+export interface ParsedChapter {
+  chapterNo: number
+  title: string
+  volumeIdx: number
+  fields: ParsedFields
+  /** 原始正文块（未标注时预览用） */
+  rawText: string
+}
+
+export interface ParsedVolume {
+  index: number
+  title: string
+  chapters: ParsedChapter[]
+}
+
+/** 大纲分层解析结果（import_session.parsed_tree） */
+export interface ParsedTree {
+  /** 总纲（卷之前的散落段落） */
+  coreOutline: string
+  volumes: ParsedVolume[]
+  /** 是否识别到分卷结构 */
+  hasVolume: boolean
+  /** 识别到的标题风格 */
+  headingStyle: 'markdown' | 'chinese' | 'mixed' | 'none'
+  warnings: string[]
+}
+
+/** 单字段校验结果 */
+export interface ValidationFieldResult {
+  field: BriefFieldKey
+  label: string
+  present: boolean
+  required: boolean
+}
+
+export interface ValidationRow {
+  chapterNo: number
+  title: string
+  fields: ValidationFieldResult[]
+  missingRequired: number
+  /** 缺项明细文案（如「出场角色：未识别」） */
+  missing: string[]
+}
+
+/** 导入后体检表（import_session.validation） */
+export interface ValidationReport {
+  rows: ValidationRow[]
+  requiredFields: BriefFieldKey[]
+  totalMissing: number
+  /** 通过率（0-100） */
+  passRate: number
+}
+
+/** 将写入 chapter_brief 的载荷 */
+export interface ImportBriefPayload {
+  projectId: number
+  chapterNo: number
+  volumeIdx: number
+  title: string
+  role: string
+  purpose: string
+  keyEvents: string
+  characters: string[]
+  sceneBeats: string[]
+  suspenseHook: string
+  userGuidance: string
+  notes: string
+}
+
+export type ImportAction = 'create' | 'update' | 'skip' | 'conflict'
+
+/** 字段级差异（左旧右新） */
+export interface ImportFieldDiff {
+  field: BriefFieldKey
+  label: string
+  oldValue: string
+  newValue: string
+  changed: boolean
+}
+
+/** 暂存条目（import_item） */
+export interface ImportItem {
+  id: string
+  sessionId: string
+  chapterNo: number
+  volumeIdx: number
+  title: string
+  action: ImportAction
+  enabled: boolean
+  payload: ImportBriefPayload
+  diff: ImportFieldDiff[]
+  /** 启发式归类（未命中标签）的字段，预览标黄 */
+  heuristicFields: BriefFieldKey[]
+  /** 是否与已有正文冲突 */
+  hasDraft: boolean
+}
+
+/** 导入统计 */
+export interface ImportStats {
+  total: number
+  create: number
+  update: number
+  conflict: number
+  skip: number
+}
+
+/** 导入会话（import_session + 条目） */
+export interface ImportSession {
+  id: string
+  projectId: number | null
+  sourcePath: string
+  sourceKind: string
+  tree: ParsedTree
+  validation: ValidationReport
+  items: ImportItem[]
+  stats: ImportStats
+  status: 'staging' | 'committed' | 'cancelled'
+  warnings: string[]
+  encoding?: string
+  /** 仅解析响应携带（不落库）：原始全文，供「正文」Tab 作为草稿导入复用 */
+  rawText?: string
+  createdAt: number
+}
+
+/** 导入入参：path 或 text 二选一 */
+export interface ImportAnalyzeInput {
+  path?: string
+  text?: string
+  kind?: string
+  projectId?: number
+  useLlm?: boolean
+}
+
+export interface ImportUpdateItemInput {
+  sessionId: string
+  itemId: string
+  action?: ImportAction
+  enabled?: boolean
+  /** 调整章节号（上下移动 / 重排） */
+  chapterNo?: number
+  /** 调整归属卷（调整层级） */
+  volumeIdx?: number
+}
+
+export interface ImportValidateInput {
+  sessionId: string
+  requiredFields?: BriefFieldKey[]
+}
+
+/** 导入进度（主进程 → 渲染进程推送） */
+export interface ImportProgress {
+  sessionId: string
+  phase: 'read' | 'extract' | 'parse' | 'diff' | 'llm' | 'done'
+  message: string
+  percent: number
+}
+
+export type ImportEvent =
+  | { type: 'progress'; progress: ImportProgress }
+  | { type: 'done'; session: ImportSession }
+  | { type: 'error'; message: string }
+
 /** 预加载脚本向渲染进程暴露的 API 契约 */
 export interface InkwellApi {
   project: {
@@ -764,6 +947,8 @@ export interface InkwellApi {
     mcpLaunch(): Promise<McpLaunchConfig>
     /** 打开目录选择对话框，返回所选目录（取消为 null） */
     pickFolder(): Promise<string | null>
+    /** M7：打开文件选择对话框（docx/epub/txt/md/json/vela），返回所选文件（取消为 null） */
+    pickFile(): Promise<string | null>
     /** 在系统文件管理器中打开路径 */
     openPath(path: string): Promise<void>
     /** 清理 Electron 运行时缓存 */
@@ -818,6 +1003,23 @@ export interface InkwellApi {
     /** 在文件管理器中显示备份目录 */
     reveal(): Promise<void>
   }
+  /** M7：内容导入与解析（拖拽 / 粘贴 → 解析 → 差异预览 → 提交） */
+  import: {
+    /** 从文件路径或粘贴文本创建导入会话（含解析树、体检、逐条差异） */
+    analyze(input: ImportAnalyzeInput): Promise<ImportSession>
+    /** 读取某个暂存会话（刷新页面后恢复） */
+    session(id: string): Promise<ImportSession | null>
+    /** 改单条 action / enabled */
+    updateItem(input: ImportUpdateItemInput): Promise<ImportSession>
+    /** 重跑体检（可自定义必填字段） */
+    validate(input: ImportValidateInput): Promise<ImportSession>
+    /** 仅落库 enabled 的条目；返回实际写入章数 */
+    commit(sessionId: string): Promise<{ committed: number }>
+    cancel(sessionId: string): Promise<void>
+    onEvent(listener: (event: ImportEvent) => void): () => void
+  }
+  /** M7：Electron 44 已移除 File.path，拖拽落点必须经 preload 的 webUtils 解析 */
+  resolveDropPath(file: File): string
   /** 主进程 → 渲染进程：迁移进度推送通道 */
   onMigrationEvent(listener: (event: MigrationEvent) => void): () => void
 }

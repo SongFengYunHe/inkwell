@@ -56,6 +56,7 @@ export const IpcChannel = {
   appMcpEntry: 'app:mcp-entry',
   appMcpLaunch: 'app:mcp-launch',
   appPickFolder: 'app:pick-folder',
+  appPickFile: 'app:pick-file',
   appOpenPath: 'app:open-path',
   appClearCache: 'app:clear-cache',
   /** M6：多书库 */
@@ -85,7 +86,16 @@ export const IpcChannel = {
   backupCreate: 'backup:create',
   backupRestore: 'backup:restore',
   backupDelete: 'backup:delete',
-  backupReveal: 'backup:reveal'
+  backupReveal: 'backup:reveal',
+  /** M7：内容导入与解析 */
+  importAnalyze: 'import:analyze',
+  importSession: 'import:session',
+  importUpdateItem: 'import:update-item',
+  importCommit: 'import:commit',
+  importCancel: 'import:cancel',
+  importValidate: 'import:validate',
+  /** 主进程 → 渲染进程：导入进度推送 */
+  importEvent: 'import:event'
 } as const
 
 export type IpcChannelName = (typeof IpcChannel)[keyof typeof IpcChannel]
@@ -141,7 +151,7 @@ export const draftSaveSchema = z.object({
   chapterNo: z.number().int().min(1).max(99_999),
   version: z.number().int().min(1).max(9_999).optional(),
   status: z.enum(['draft', 'revised', 'finalized', 'archived']).optional(),
-  source: z.enum(['write', 'continue', 'rewrite', 'polish', 'fix']).optional(),
+  source: z.enum(['write', 'continue', 'rewrite', 'polish', 'fix', 'import']).optional(),
   content: z.string().max(2_000_000).optional()
 })
 
@@ -263,3 +273,47 @@ export const trashItemSchema = z.object({
 })
 
 export const backupNameSchema = z.string().min(1).max(200)
+
+/* ============================ M7：内容导入与解析 ============================ */
+
+export const briefFieldKeySchema = z.enum([
+  'purpose',
+  'keyEvents',
+  'characters',
+  'suspenseHook',
+  'sceneBeats',
+  'userGuidance',
+  'notes'
+])
+
+export const importActionSchema = z.enum(['create', 'update', 'skip', 'conflict'])
+
+export const importAnalyzeSchema = z
+  .object({
+    path: z.string().trim().min(1).max(1_000).optional(),
+    text: z.string().max(2_000_000).optional(),
+    kind: z.enum(['txt', 'md', 'docx', 'epub', 'json', 'vela', 'manual']).optional(),
+    projectId: projectIdSchema.optional(),
+    useLlm: z.boolean().optional()
+  })
+  .refine((value) => Boolean(value.path) !== Boolean(value.text && value.text.length > 0), {
+    message: 'path 与 text 必须二选一'
+  })
+
+export const importSessionSchema = z.object({ id: z.string().min(1).max(100) })
+
+export const importUpdateItemSchema = z.object({
+  sessionId: z.string().min(1).max(100),
+  itemId: z.string().min(1).max(100),
+  action: importActionSchema.optional(),
+  enabled: z.boolean().optional(),
+  chapterNo: z.number().int().min(1).max(99_999).optional(),
+  volumeIdx: z.number().int().min(0).max(9_999).optional()
+})
+
+export const importCommitSchema = z.object({ sessionId: z.string().min(1).max(100) })
+
+export const importValidateSchema = z.object({
+  sessionId: z.string().min(1).max(100),
+  requiredFields: z.array(briefFieldKeySchema).max(9).optional()
+})

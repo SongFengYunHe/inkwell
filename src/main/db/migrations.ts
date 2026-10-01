@@ -261,5 +261,41 @@ export const migrations: Migration[] = [
       `DROP INDEX chapter_draft_project_chapter_version_uq`,
       `CREATE UNIQUE INDEX chapter_draft_project_chapter_version_uq ON chapter_draft (project_id, chapter_no, version) WHERE deleted_at IS NULL`
     ]
+  },
+  {
+    version: 6,
+    name: 'import_session_and_items',
+    statements: [
+      // 导入会话（暂存，不落 chapter_brief）；parsed_tree/validation 为 JSON 文本
+      `CREATE TABLE import_session (
+        id TEXT PRIMARY KEY,
+        project_id TEXT,
+        source_path TEXT NOT NULL DEFAULT '',
+        source_kind TEXT NOT NULL DEFAULT '',
+        parsed_tree TEXT NOT NULL DEFAULT '{}',
+        validation TEXT NOT NULL DEFAULT '{}',
+        warnings TEXT NOT NULL DEFAULT '[]',
+        encoding TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'staging'
+      )`,
+      `CREATE INDEX import_session_status_idx ON import_session (status)`,
+
+      // 暂存条目（逐章）；payload/diff 为 JSON 文本，enabled 默认 1，用户可逐条开关
+      `CREATE TABLE import_item (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES import_session(id) ON DELETE CASCADE,
+        chapter_no INTEGER NOT NULL DEFAULT 0,
+        volume_idx INTEGER NOT NULL DEFAULT 0,
+        title TEXT NOT NULL DEFAULT '',
+        action TEXT NOT NULL DEFAULT 'create',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        payload TEXT NOT NULL DEFAULT '{}',
+        diff TEXT NOT NULL DEFAULT '[]',
+        heuristic_fields TEXT NOT NULL DEFAULT '[]',
+        has_draft INTEGER NOT NULL DEFAULT 0
+      )`,
+      `CREATE INDEX import_item_session_idx ON import_item (session_id)`
+    ]
   }
 ]

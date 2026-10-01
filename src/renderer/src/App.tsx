@@ -1,8 +1,10 @@
 import { useEffect } from 'react'
 import Bookshelf from './pages/Bookshelf'
+import ImportReview from './pages/ImportReview'
 import LibraryManager from './pages/LibraryManager'
 import Settings from './pages/Settings'
 import Workspace from './pages/Workspace'
+import DropZone from './components/DropZone'
 import MigrationWizard from './components/MigrationWizard'
 import { useAppStore } from './stores/appStore'
 
@@ -23,6 +25,9 @@ export default function App() {
   const dismissUndo = useAppStore((s) => s.dismissUndo)
   const runUndo = useAppStore((s) => s.runUndo)
   const migrationOpen = useAppStore((s) => s.migrationOpen)
+  const importSession = useAppStore((s) => s.importSession)
+  const dropImport = useAppStore((s) => s.dropImport)
+  const handleImportEvent = useAppStore((s) => s.handleImportEvent)
 
   useEffect(() => {
     void loadBootstrap()
@@ -47,12 +52,44 @@ export default function App() {
     return window.inkwell.pipeline.onEvent(handlePipelineEvent)
   }, [handlePipelineEvent])
 
+  useEffect(() => {
+    return window.inkwell.import.onEvent(handleImportEvent)
+  }, [handleImportEvent])
+
+  // 全局防跳转（Electron 经典坑）：拖入文件时阻止浏览器默认打开行为
+  useEffect(() => {
+    const prevent = (event: DragEvent): void => event.preventDefault()
+    window.addEventListener('dragover', prevent)
+    window.addEventListener('drop', prevent)
+    return () => {
+      window.removeEventListener('dragover', prevent)
+      window.removeEventListener('drop', prevent)
+    }
+  }, [])
+
   // 撤销提示 5 秒后自动消失
   useEffect(() => {
     if (!undo) return
     const timer = window.setTimeout(() => dismissUndo(), 5000)
     return () => window.clearTimeout(timer)
   }, [undo, dismissUndo])
+
+  /** 拖拽落点路由：逐个文件交给 store 分流，汇总成败供重试 */
+  const handleDropPaths = async (
+    paths: string[],
+    target: string
+  ): Promise<Array<{ path: string; ok: boolean }>> => {
+    const results: Array<{ path: string; ok: boolean }> = []
+    for (const path of paths) {
+      try {
+        await dropImport(path, target)
+        results.push({ path, ok: true })
+      } catch {
+        results.push({ path, ok: false })
+      }
+    }
+    return results
+  }
 
   const page =
     view === 'settings' ? (
@@ -109,6 +146,8 @@ export default function App() {
       )}
 
       {migrationOpen && <MigrationWizard />}
+      <DropZone onDropPaths={handleDropPaths} />
+      {importSession && <ImportReview />}
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { PasteImportDialog } from '../components/DropZone'
 import ThemeToggle from '../components/ThemeToggle'
 import { GENRE_TEMPLATES, findGenreTemplate } from '../data/genres'
 import { useAppStore } from '../stores/appStore'
@@ -11,11 +12,19 @@ export default function Bookshelf() {
   const openProject = useAppStore((s) => s.openProject)
   const removeProject = useAppStore((s) => s.removeProject)
   const setView = useAppStore((s) => s.setView)
+  const dropImport = useAppStore((s) => s.dropImport)
+  const createProjectFromImport = useAppStore((s) => s.createProjectFromImport)
 
   const [name, setName] = useState('')
   const [genre, setGenre] = useState(GENRE_TEMPLATES[0].name)
   const [totalChapters, setTotalChapters] = useState(GENRE_TEMPLATES[0].chapters)
   const [premise, setPremise] = useState('')
+  const [pasteOpen, setPasteOpen] = useState(false)
+
+  const handlePickFile = async (): Promise<void> => {
+    const path = await window.inkwell.app.pickFile()
+    if (path) await dropImport(path, 'bookshelf')
+  }
 
   const template = findGenreTemplate(genre)
 
@@ -41,7 +50,7 @@ export default function Bookshelf() {
   }
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-6xl flex-col gap-8 px-8 py-10">
+    <div data-drop-zone="bookshelf" className="mx-auto flex h-full w-full max-w-6xl flex-col gap-8 px-8 py-10">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">书架</h1>
@@ -49,6 +58,22 @@ export default function Bookshelf() {
         </div>
         <div className="flex items-center gap-2">
           <span className="mr-1 text-xs text-stone-400">{loading ? '加载中…' : `共 ${projects.length} 个项目`}</span>
+          <button
+            type="button"
+            onClick={() => void handlePickFile()}
+            disabled={loading}
+            className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm text-stone-600 transition hover:bg-stone-50 disabled:opacity-40"
+          >
+            导入文档
+          </button>
+          <button
+            type="button"
+            onClick={() => setPasteOpen(true)}
+            disabled={loading}
+            className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm text-stone-600 transition hover:bg-stone-50 disabled:opacity-40"
+          >
+            粘贴文本导入
+          </button>
           <button
             type="button"
             onClick={() => void importVelaProject()}
@@ -159,6 +184,7 @@ export default function Bookshelf() {
               {projects.map((project) => (
                 <article
                   key={project.id}
+                  data-drop-zone={`project-card:${project.id}`}
                   className="group flex cursor-pointer flex-col justify-between gap-4 rounded-xl border border-stone-200 bg-white p-4 shadow-sm transition hover:border-amber-400 hover:shadow"
                   onClick={() => void openProject(project.id)}
                 >
@@ -188,6 +214,16 @@ export default function Bookshelf() {
           )}
         </section>
       </div>
+
+      {pasteOpen && (
+        <PasteImportDialog
+          onClose={() => setPasteOpen(false)}
+          onSubmit={(text) => {
+            setPasteOpen(false)
+            void createProjectFromImport({ text })
+          }}
+        />
+      )}
     </div>
   )
 }

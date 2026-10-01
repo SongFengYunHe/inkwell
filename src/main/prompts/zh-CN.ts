@@ -501,6 +501,52 @@ export function buildMemoryMessages(input: MemoryPromptInput): ChatMessage[] {
   ]
 }
 
+/* ============================ M7：导入解析兜底 ============================ */
+
+const SYSTEM_IMPORT_PARSER = [
+  '你是一位中文小说大纲结构整理员。',
+  '你从一段「未标注」的章节大纲文本中，识别出本章目的、关键事件、出场角色、场景节拍与悬念钩子。',
+  '只依据给定文本，不虚构原文没有的信息；某项在文本中确实没有就留空。',
+  '你只输出 JSON，绝不输出任何解释性文字。'
+].join('\n')
+
+export interface ImportExtractPromptInput {
+  bookTitle?: string
+  chapterNo: number
+  title: string
+  /** 未被标签命中的原始文本块 */
+  rawText: string
+}
+
+/** 导入解析兜底（计划书 §4.3 ⑥ `import.extract_brief`，默认关闭） */
+export function buildImportExtractMessages(input: ImportExtractPromptInput): ChatMessage[] {
+  return [
+    { role: 'system', content: SYSTEM_IMPORT_PARSER },
+    {
+      role: 'user',
+      content: [
+        '【任务】把下面这段未标注的章节大纲整理成结构化字段。',
+        [row('书名', input.bookTitle ?? ''), row('章节号', String(input.chapterNo)), row('章节标题', input.title)]
+          .filter(Boolean)
+          .join('\n'),
+        `【待整理文本】\n${input.rawText.trim()}`,
+        [
+          '【输出格式】输出一个 JSON 对象：',
+          '{',
+          '  "purpose": "本章目的，60 字以内",',
+          '  "keyEvents": "关键事件，120 字以内",',
+          '  "characters": ["出场角色"],',
+          '  "sceneBeats": ["场景节拍"],',
+          '  "suspenseHook": "章末悬念钩子，40 字以内"',
+          '}',
+          '- 文本中没有的信息留空字符串 / 空数组，不要编造',
+          JSON_ONLY
+        ].join('\n')
+      ].join('\n\n')
+    }
+  ]
+}
+
 export interface FixPromptInput {
   bookTitle: string
   genre: string

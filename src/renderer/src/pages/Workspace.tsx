@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { PasteImportDialog } from '../components/DropZone'
 import BriefPanel from '../components/BriefPanel'
 import ChapterNav from '../components/ChapterNav'
 import DraftPanel from '../components/DraftPanel'
@@ -33,6 +34,8 @@ export default function Workspace() {
 
   const [tab, setTab] = useState<Tab>('brief')
   const [exportOpen, setExportOpen] = useState(false)
+  const [pasteOpen, setPasteOpen] = useState(false)
+  const openImportReview = useAppStore((s) => s.openImportReview)
 
   const project = projects.find((item) => item.id === activeProjectId) ?? null
   if (!project) {
@@ -129,16 +132,35 @@ export default function Workspace() {
 
           <div className="min-h-0 flex-1 overflow-hidden">
             {tab === 'draft' ? (
-              <div className="flex h-full min-h-0 flex-col p-5">
+              <div data-drop-zone="draft" className="flex h-full min-h-0 flex-col p-5">
                 <DraftPanel />
               </div>
             ) : (
-              <div className="h-full overflow-y-auto p-5">
+              <div
+                className="h-full overflow-y-auto p-5"
+                data-drop-zone={tab === 'memory' ? undefined : 'outline'}
+              >
                 {tab === 'memory' ? (
                   <MemoryPanel />
                 ) : (
                   <div className="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
-                    {tab === 'outline' ? <OutlinePanel /> : <BriefPanel />}
+                    {tab === 'outline' ? (
+                      <OutlinePanel />
+                    ) : (
+                      <>
+                        <div className="mb-3 flex items-center justify-between">
+                          <span className="text-xs text-stone-400">可拖入 .md/.docx/.epub 或粘贴文本，自动分层解析</span>
+                          <button
+                            type="button"
+                            onClick={() => setPasteOpen(true)}
+                            className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs text-stone-600 transition hover:bg-stone-50"
+                          >
+                            粘贴文本导入
+                          </button>
+                        </div>
+                        <BriefPanel />
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -148,6 +170,15 @@ export default function Workspace() {
       </div>
 
       {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} />}
+      {pasteOpen && (
+        <PasteImportDialog
+          onClose={() => setPasteOpen(false)}
+          onSubmit={(text) => {
+            setPasteOpen(false)
+            void openImportReview({ text, kind: 'manual', projectId: activeProjectId ?? undefined })
+          }}
+        />
+      )}
     </div>
   )
 }

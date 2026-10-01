@@ -10,6 +10,11 @@ import {
   fixChapterSchema,
   generateStartSchema,
   idSchema,
+  importAnalyzeSchema,
+  importCommitSchema,
+  importSessionSchema,
+  importUpdateItemSchema,
+  importValidateSchema,
   libraryCreateSchema,
   libraryIdSchema,
   libraryLocateSchema,
@@ -31,12 +36,28 @@ import {
 } from '@shared/ipc'
 import { join } from 'node:path'
 import { rmSync } from 'node:fs'
-import type { GenerateEvent, McpLaunchConfig, MigrationEvent, PipelineEvent, PipelineRun, WizardEvent } from '@shared/types'
+import type {
+  GenerateEvent,
+  ImportEvent,
+  McpLaunchConfig,
+  MigrationEvent,
+  PipelineEvent,
+  PipelineRun,
+  WizardEvent
+} from '@shared/types'
 import { app, dialog, ipcMain, session, shell, type WebContents } from 'electron'
 import { exportChapterTask } from '../bridge/task-slip'
 import { getDatabasePath } from '../db/client'
 import * as repo from '../db/repositories'
 import { importVelaDatabase } from '../import/vela'
+import {
+  analyzeImport,
+  cancelSession,
+  commitSession,
+  getSession,
+  revalidateSession,
+  updateImportItem
+} from '../import/session'
 import { getLatestReview, saveReview } from '../db/memory-repo'
 import { createRun, latestRun, updateRun } from '../db/pipeline-repo'
 import { auditChapter } from '../engine/audit'
@@ -522,5 +543,43 @@ export function registerIpcHandlers(): void {
       // 忽略清缓存失败
     }
     return { freedBytes }
+  })
+
+  ipcMain.handle(IpcChannel.appPickFile, async () => {
+    const picked = await dialog.showOpenDialog({
+      title: '选择要导入的文档',
+      properties: ['openFile'],
+      filters: [
+        { name: '支持的文档', extensions: ['txt', 'md', 'markdown', 'json', 'docx', 'epub', 'vela', 'db'] },
+        { name: '全部文件', extensions: ['*'] }
+      ]
+    })
+    if (picked.canceled || picked.filePaths.length === 0) return null
+    return picked.filePaths[0]
+  })
+
+  /* ============================== M7：内容导入 ============================== */
+  ipcMain.handle(IpcChannel.importAnalyze, async (event, raw: unknown) => {
+    const input = importAnalyzeSchema.parse(raw)
+    const sender = event.sender
+    return analyzeImport(input, {
+      onProgress: (progress) =>
+        emit<ImportEvent>(sender, IpcChannel.importEvent, { type: 'progress', progress })
+    })
+  })
+  ipcMain.handle(IpcChannel.importSession, (_event, id: unknown) =>
+    getSession(importSessionSchema.shape.id.parse(id))
+  )
+  ipcMain.handle(IpcChannel.importUpdateItem, (_event, raw: unknown) =>
+    updateImportItem(importUpdateItemSchema.parse(raw))
+  )
+  ipcMain.handle(IpcChannel.importValidate, (_event, raw: unknown) =>
+    revalidateSession(importValidateSchema.parse(raw))
+  )
+  ipcMain.handle(IpcChannel.importCommit, (_event, id: unknown) =>
+    commitSession(importCommitSchema.shape.sessionId.parse(id))
+  )
+  ipcMain.handle(IpcChannel.importCancel, (_event, id: unknown) => {
+    cancelSession(importCommitSchema.shape.sessionId.parse(id))
   })
 }

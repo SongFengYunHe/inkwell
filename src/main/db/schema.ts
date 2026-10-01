@@ -1,6 +1,16 @@
 import { sql } from 'drizzle-orm'
 import { sqliteTable, integer, text, index, uniqueIndex } from 'drizzle-orm/sqlite-core'
-import type { AuditReport, CharacterStateDelta, ContinuityFacts, ThreadUpdate } from '@shared/types'
+import type {
+  AuditReport,
+  BriefFieldKey,
+  CharacterStateDelta,
+  ContinuityFacts,
+  ImportBriefPayload,
+  ImportFieldDiff,
+  ParsedTree,
+  ThreadUpdate,
+  ValidationReport
+} from '@shared/types'
 
 /**
  * Drizzle schema —— 应用层的类型来源（供仓库层做类型安全查询）。
@@ -312,6 +322,50 @@ export const pipelineStep = sqliteTable(
     updatedAt: integer('updated_at').notNull()
   },
   (t) => [uniqueIndex('pipeline_step_run_chapter_step_uq').on(t.runId, t.chapterNo, t.step)]
+)
+
+/* ============================ M7：内容导入与解析 ============================ */
+
+/** 导入会话（暂存；parsed_tree / validation 为 JSON） */
+export const importSession = sqliteTable(
+  'import_session',
+  {
+    id: text('id').primaryKey(),
+    /** 目标项目 id（无项目时为 null） */
+    projectId: text('project_id'),
+    sourcePath: text('source_path').notNull().default(''),
+    sourceKind: text('source_kind').notNull().default(''),
+    parsedTree: text('parsed_tree', { mode: 'json' }).$type<ParsedTree>().notNull(),
+    validation: text('validation', { mode: 'json' }).$type<ValidationReport>().notNull(),
+    warnings: text('warnings', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    encoding: text('encoding').notNull().default(''),
+    createdAt: integer('created_at').notNull(),
+    /** staging | committed | cancelled */
+    status: text('status').notNull().default('staging')
+  },
+  (t) => [index('import_session_status_idx').on(t.status)]
+)
+
+/** 暂存条目（逐章，可逐条开关） */
+export const importItem = sqliteTable(
+  'import_item',
+  {
+    id: text('id').primaryKey(),
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => importSession.id, { onDelete: 'cascade' }),
+    chapterNo: integer('chapter_no').notNull().default(0),
+    volumeIdx: integer('volume_idx').notNull().default(0),
+    title: text('title').notNull().default(''),
+    /** create | update | skip | conflict */
+    action: text('action').notNull().default('create'),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    payload: text('payload', { mode: 'json' }).$type<ImportBriefPayload>().notNull(),
+    diff: text('diff', { mode: 'json' }).$type<ImportFieldDiff[]>().notNull().default([]),
+    heuristicFields: text('heuristic_fields', { mode: 'json' }).$type<BriefFieldKey[]>().notNull().default([]),
+    hasDraft: integer('has_draft', { mode: 'boolean' }).notNull().default(false)
+  },
+  (t) => [index('import_item_session_idx').on(t.sessionId)]
 )
 
 /** 迁移版本表（schema_version 驱动迁移） */

@@ -7,6 +7,10 @@ import type {
   FixChapterInput,
   GenerateEvent,
   GenerateStartInput,
+  ImportAnalyzeInput,
+  ImportEvent,
+  ImportUpdateItemInput,
+  ImportValidateInput,
   InkwellApi,
   LibrarySettings,
   LlmRoleName,
@@ -21,7 +25,7 @@ import type {
   WizardEvent,
   WizardStartInput
 } from '@shared/types'
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
 /** 渲染进程唯一可用的桥接 API：仅暴露白名单方法，不泄漏 ipcRenderer 本体 */
 const api: InkwellApi = {
@@ -122,6 +126,7 @@ const api: InkwellApi = {
     mcpEntry: () => ipcRenderer.invoke(IpcChannel.appMcpEntry),
     mcpLaunch: () => ipcRenderer.invoke(IpcChannel.appMcpLaunch),
     pickFolder: () => ipcRenderer.invoke(IpcChannel.appPickFolder),
+    pickFile: () => ipcRenderer.invoke(IpcChannel.appPickFile),
     openPath: (path: string) => ipcRenderer.invoke(IpcChannel.appOpenPath, path),
     clearCache: () => ipcRenderer.invoke(IpcChannel.appClearCache)
   },
@@ -155,6 +160,22 @@ const api: InkwellApi = {
     remove: (name: string) => ipcRenderer.invoke(IpcChannel.backupDelete, name),
     reveal: () => ipcRenderer.invoke(IpcChannel.backupReveal)
   },
+  import: {
+    analyze: (input: ImportAnalyzeInput) => ipcRenderer.invoke(IpcChannel.importAnalyze, input),
+    session: (id: string) => ipcRenderer.invoke(IpcChannel.importSession, id),
+    updateItem: (input: ImportUpdateItemInput) => ipcRenderer.invoke(IpcChannel.importUpdateItem, input),
+    validate: (input: ImportValidateInput) => ipcRenderer.invoke(IpcChannel.importValidate, input),
+    commit: (sessionId: string) => ipcRenderer.invoke(IpcChannel.importCommit, sessionId),
+    cancel: (sessionId: string) => ipcRenderer.invoke(IpcChannel.importCancel, sessionId),
+    onEvent: (listener: (event: ImportEvent) => void) => {
+      const handler = (_event: IpcRendererEvent, payload: ImportEvent): void => listener(payload)
+      ipcRenderer.on(IpcChannel.importEvent, handler)
+      return () => {
+        ipcRenderer.removeListener(IpcChannel.importEvent, handler)
+      }
+    }
+  },
+  resolveDropPath: (file: File) => webUtils.getPathForFile(file),
   onMigrationEvent: (listener: (event: MigrationEvent) => void) => {
     const handler = (_event: IpcRendererEvent, payload: MigrationEvent): void => listener(payload)
     ipcRenderer.on(IpcChannel.libraryMigrationEvent, handler)

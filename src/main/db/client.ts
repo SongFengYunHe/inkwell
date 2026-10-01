@@ -1,5 +1,7 @@
 import Database from 'better-sqlite3'
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { mkdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import * as schema from './schema'
 import { migrations } from './migrations'
 
@@ -32,7 +34,7 @@ export function initDatabase(filePath: string, options: InitDatabaseOptions = {}
   // 桌面应用与 MCP Server 可能同时打开同一个库，给写入留出重试时间
   connection.pragma('busy_timeout = 5000')
 
-  runMigrations(connection)
+  runMigrations(connection, filePath)
 
   sqlite = connection
   db = drizzle(connection, { schema })
@@ -79,8 +81,41 @@ export function closeDatabase(): void {
   databasePath = ''
 }
 
+/** 备份文件时间戳：YYYYMMDD-HHMMSS */
+function backupStamp(now = Date.now()): string {
+  const d = new Date(now)
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+}
+
+/**
+ * 迁移前强制自动备份（迁移铁律，计划书 §6）：
+ *   - 仅在「存在待执行迁移且数据库非空（已应用迁移数 > 0）」时执行；
+ *   - 全新空库不备份；
+ *   - 备份失败不静默跳过：打印 console.error 后继续（迁移本身在事务中，失败会整体回滚）。
+ */
+function backupBeforeMigrate(
+  connection: Database.Database,
+  filePath: string,
+  appliedCount: number,
+  targetVersion: number
+): void {
+  if (appliedCount <= 0) return
+  const dir = join(dirname(filePath), 'backups')
+  const target = join(dir, `inkwell-${backupStamp()}-pre-migrate-v${targetVersion}.db`)
+  try {
+    mkdirSync(dir, { recursive: true })
+    connection.pragma('wal_checkpoint(TRUNCATE)')
+    connection.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`)
+    console.log(`[inkwell] pre-migration backup created: ${target}`)
+  } catch (error) {
+    // 备份失败不阻断迁移：至少留下可排查的日志，事务仍保证迁移原子性
+    console.error('[inkwell] pre-migration backup failed:', error)
+  }
+}
+
 /** 由 schema_version 驱动的迁移执行器 */
-function runMigrations(connection: Database.Database): void {
+function runMigrations(connection: Database.Database, filePath: string): void {
   connection.exec(
     `CREATE TABLE IF NOT EXISTS schema_version (
       version INTEGER PRIMARY KEY,
@@ -92,6 +127,12 @@ function runMigrations(connection: Database.Database): void {
     .prepare('SELECT version FROM schema_version')
     .all() as Array<{ version: number }>
   const applied = new Set(appliedRows.map((row) => row.version))
+
+  const pending = migrations.filter((migration) => !applied.has(migration.version))
+  if (pending.length > 0) {
+    const targetVersion = pending.reduce((max, item) => Math.max(max, item.version), 0)
+    backupBeforeMigrate(connection, filePath, applied.size, targetVersion)
+  }
 
   for (const migration of migrations) {
     if (applied.has(migration.version)) continue
