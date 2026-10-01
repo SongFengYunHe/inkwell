@@ -1,5 +1,6 @@
 import {
   IpcChannel,
+  backupNameSchema,
   briefExpandSchema,
   briefSaveSchema,
   chapterQuerySchema,
@@ -9,6 +10,13 @@ import {
   fixChapterSchema,
   generateStartSchema,
   idSchema,
+  libraryCreateSchema,
+  libraryIdSchema,
+  libraryLocateSchema,
+  libraryMigrateSchema,
+  libraryRemoveSchema,
+  libraryRenameSchema,
+  librarySettingsSchema,
   pathSchema,
   pipelineStartSchema,
   pipelineSteerSchema,
@@ -18,11 +26,13 @@ import {
   providerSaveSchema,
   requestIdSchema,
   roleRouteSaveSchema,
+  trashItemSchema,
   wizardStartSchema
 } from '@shared/ipc'
 import { join } from 'node:path'
-import type { GenerateEvent, McpLaunchConfig, PipelineEvent, PipelineRun, WizardEvent } from '@shared/types'
-import { app, dialog, ipcMain, shell, type WebContents } from 'electron'
+import { rmSync } from 'node:fs'
+import type { GenerateEvent, McpLaunchConfig, MigrationEvent, PipelineEvent, PipelineRun, WizardEvent } from '@shared/types'
+import { app, dialog, ipcMain, session, shell, type WebContents } from 'electron'
 import { exportChapterTask } from '../bridge/task-slip'
 import { getDatabasePath } from '../db/client'
 import * as repo from '../db/repositories'
@@ -58,9 +68,30 @@ import {
   listProviders,
   saveProvider
 } from '../providers/store'
+import { backupsDirPath, createBackup, deleteBackup, listBackups, restoreBackup } from '../db/backup'
+import { emptyTrash, listTrash, purgeTrash, restoreTrash } from '../db/trash'
+import { estimateMigrationBytes, migrateActiveLibraryTo } from '../library/migrate'
+import { computeDirSize, precheckLibraryPath } from '../library/precheck'
+import {
+  addLibrary,
+  createLibrary,
+  dismissMigration,
+  getBootstrapState,
+  getSettings,
+  listLibraries,
+  locateLibrary,
+  removeLibrary,
+  renameLibrary,
+  saveSettings,
+  switchLibrary
+} from '../library/registry'
+import { registerAborter, registerCleanup, unregisterAborter } from '../lifecycle'
 
 /** 正在进行的可中断任务，key 为渲染进程生成的 requestId */
 const activeJobs = new Map<string, AbortController>()
+
+/** 连写请求 id 集合（退出时统一中断，保证断点写回） */
+const activePipelineIds = new Set<string>()
 
 /** 长任务的失败信息统一格式化 */
 function jobErrorMessage(error: unknown, aborted: boolean): string {
@@ -74,6 +105,12 @@ function emit<T>(sender: WebContents, channel: string, payload: T): void {
 
 /** 注册全部 IPC 处理器；入参一律经 zod 校验后再进入业务层 */
 export function registerIpcHandlers(): void {
+  // 退出时中断所有在途连写，让断点写回 pipeline_step
+  registerCleanup(() => {
+    for (const requestId of activePipelineIds) abortPipeline(requestId)
+    activePipelineIds.clear()
+  })
+
   /* --------------------------------- 项目 --------------------------------- */
   ipcMain.handle(IpcChannel.projectList, () => repo.listProjects())
   ipcMain.handle(IpcChannel.projectGet, (_event, id: unknown) => repo.getProject(idSchema.parse(id)))
@@ -206,6 +243,7 @@ export function registerIpcHandlers(): void {
 
     const controller = new AbortController()
     activeJobs.set(input.requestId, controller)
+    registerAborter(controller)
     const sender = event.sender
 
     void (async () => {
@@ -224,6 +262,7 @@ export function registerIpcHandlers(): void {
         })
       } finally {
         activeJobs.delete(input.requestId)
+        unregisterAborter(controller)
       }
     })()
   })
@@ -239,6 +278,7 @@ export function registerIpcHandlers(): void {
 
     const controller = new AbortController()
     activeJobs.set(input.requestId, controller)
+    registerAborter(controller)
     const sender = event.sender
 
     void (async () => {
@@ -262,6 +302,7 @@ export function registerIpcHandlers(): void {
         })
       } finally {
         activeJobs.delete(input.requestId)
+        unregisterAborter(controller)
       }
     })()
   })
@@ -290,14 +331,19 @@ export function registerIpcHandlers(): void {
   /** 把一个 run 交给连写驱动；控制器按 requestId 索引，供暂停 / Steer / 验收指令寻址 */
   const launchPipeline = (sender: WebContents, requestId: string, run: PipelineRun): void => {
     const send = (payload: PipelineEvent): void => emit<PipelineEvent>(sender, IpcChannel.pipelineEvent, payload)
-    void runPipeline({ requestId, run, useModelAudit: true, emit: send }).catch((error: unknown) => {
-      send({
-        requestId,
-        type: 'error',
-        run: null,
-        message: error instanceof Error ? error.message : String(error)
+    activePipelineIds.add(requestId)
+    void runPipeline({ requestId, run, useModelAudit: true, emit: send })
+      .catch((error: unknown) => {
+        send({
+          requestId,
+          type: 'error',
+          run: null,
+          message: error instanceof Error ? error.message : String(error)
+        })
       })
-    })
+      .finally(() => {
+        activePipelineIds.delete(requestId)
+      })
   }
 
   ipcMain.handle(IpcChannel.pipelineStart, (event, raw: unknown) => {
@@ -385,5 +431,94 @@ export function registerIpcHandlers(): void {
       env: {},
       configJson: JSON.stringify({ mcpServers: { inkwell: { command, args: [entry] } } }, null, 2)
     }
+  })
+
+  /* ============================== M6：多书库 ============================== */
+  ipcMain.handle(IpcChannel.libraryBootstrap, () => getBootstrapState())
+  ipcMain.handle(IpcChannel.libraryList, () => listLibraries())
+  ipcMain.handle(IpcChannel.libraryCreate, (_event, raw: unknown) => createLibrary(libraryCreateSchema.parse(raw)))
+  ipcMain.handle(IpcChannel.libraryAdd, (_event, raw: unknown) => addLibrary(libraryCreateSchema.parse(raw)))
+  ipcMain.handle(IpcChannel.librarySwitch, (_event, id: unknown) => switchLibrary(libraryIdSchema.parse(id)))
+  ipcMain.handle(IpcChannel.libraryLocate, (_event, raw: unknown) => locateLibrary(libraryLocateSchema.parse(raw)))
+  ipcMain.handle(IpcChannel.libraryRemove, (_event, raw: unknown) => removeLibrary(libraryRemoveSchema.parse(raw)))
+  ipcMain.handle(IpcChannel.libraryRename, (_event, raw: unknown) => renameLibrary(libraryRenameSchema.parse(raw)))
+  ipcMain.handle(IpcChannel.libraryPrecheck, (_event, target: unknown) =>
+    precheckLibraryPath(pathSchema.parse(target))
+  )
+  ipcMain.handle(IpcChannel.librarySettings, () => getSettings())
+  ipcMain.handle(IpcChannel.librarySaveSettings, (_event, raw: unknown) =>
+    saveSettings(librarySettingsSchema.parse(raw))
+  )
+  ipcMain.handle(IpcChannel.libraryDismissMigration, () => {
+    dismissMigration()
+  })
+
+  ipcMain.handle(IpcChannel.libraryMigrate, (event, raw: unknown) => {
+    const input = libraryMigrateSchema.parse(raw)
+    const sender = event.sender
+    const emitMigration = (payload: MigrationEvent): void =>
+      emit<MigrationEvent>(sender, IpcChannel.libraryMigrationEvent, payload)
+
+    const precheck = precheckLibraryPath(input.targetPath, { sourceBytes: estimateMigrationBytes() })
+    for (const warning of precheck.warnings) {
+      emitMigration({ type: 'progress', progress: { phase: 'precheck', message: warning, percent: 5 } })
+    }
+
+    const result = migrateActiveLibraryTo(input.targetPath, {
+      onProgress: (progress) => emitMigration({ type: 'progress', progress })
+    })
+    emitMigration({ type: 'done', result })
+    return result
+  })
+
+  /* ============================== M6：回收站 ============================== */
+  ipcMain.handle(IpcChannel.trashList, () => listTrash())
+  ipcMain.handle(IpcChannel.trashRestore, (_event, raw: unknown) => restoreTrash(trashItemSchema.parse(raw)))
+  ipcMain.handle(IpcChannel.trashPurge, (_event, raw: unknown) => {
+    purgeTrash(trashItemSchema.parse(raw))
+  })
+  ipcMain.handle(IpcChannel.trashEmpty, () => emptyTrash())
+
+  /* =============================== M6：备份 =============================== */
+  ipcMain.handle(IpcChannel.backupList, () => listBackups())
+  ipcMain.handle(IpcChannel.backupCreate, () => createBackup('manual'))
+  ipcMain.handle(IpcChannel.backupRestore, (_event, name: unknown) => restoreBackup(backupNameSchema.parse(name)))
+  ipcMain.handle(IpcChannel.backupDelete, (_event, name: unknown) => {
+    deleteBackup(backupNameSchema.parse(name))
+  })
+  ipcMain.handle(IpcChannel.backupReveal, async () => {
+    await shell.openPath(backupsDirPath())
+  })
+
+  /* ============================= M6：应用杂项 ============================= */
+  ipcMain.handle(IpcChannel.appPickFolder, async () => {
+    const picked = await dialog.showOpenDialog({
+      title: '选择目录',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (picked.canceled || picked.filePaths.length === 0) return null
+    return picked.filePaths[0]
+  })
+  ipcMain.handle(IpcChannel.appOpenPath, async (_event, target: unknown) => {
+    await shell.openPath(pathSchema.parse(target))
+  })
+  ipcMain.handle(IpcChannel.appClearCache, async () => {
+    const userData = app.getPath('userData')
+    let freedBytes = 0
+    for (const dir of ['Cache', 'Code Cache', 'GPUCache', 'DawnGraphiteCache', 'DawnWebGPUCache']) {
+      const target = join(userData, dir)
+      try {
+        freedBytes += computeDirSize(target)
+        rmSync(target, { recursive: true, force: true })
+      } catch {
+        // 单个缓存目录清理失败不影响其余
+      }
+    }
+    try {
+      await session.defaultSession.clearCache()
+    } catch {
+      // 忽略清缓存失败
+    }
+    return { freedBytes }
   })
 }

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, isNull } from 'drizzle-orm'
 import type {
   BriefSaveInput,
   ChapterBrief,
@@ -10,6 +10,12 @@ import type {
 } from '@shared/types'
 import { getDb } from './client'
 import { chapterBrief, chapterDraft, project } from './schema'
+import { isQuitting } from '../lifecycle'
+
+/** 退出过程中拒绝新的写操作，保证数据落盘一致 */
+function assertWritable(): void {
+  if (isQuitting()) throw new Error('应用正在退出，已拒绝本次写入')
+}
 
 /** 中文场景下的字符数统计：忽略所有空白字符 */
 export function countWords(content: string): number {
@@ -29,18 +35,33 @@ const PROJECT_IMMUTABLE = new Set(['id', 'createdAt', 'updatedAt'])
 const BRIEF_IMMUTABLE = new Set(['id', 'projectId', 'createdAt', 'updatedAt'])
 const DRAFT_IMMUTABLE = new Set(['id', 'projectId', 'createdAt', 'updatedAt', 'wordCount'])
 
+/**
+ * 软删除约定（M6）：所有查询默认 `WHERE deleted_at IS NULL`。
+ * 删除一律打时间戳（repositories / trash 层统一封装），不在各处散落。
+ */
+
 /* ---------------------------------- 项目 ---------------------------------- */
 
 export function listProjects(): Project[] {
-  return getDb().select().from(project).orderBy(desc(project.updatedAt)).all()
+  return getDb()
+    .select()
+    .from(project)
+    .where(isNull(project.deletedAt))
+    .orderBy(desc(project.updatedAt))
+    .all()
 }
 
 export function getProject(id: number): Project | null {
-  const row = getDb().select().from(project).where(eq(project.id, id)).get()
+  const row = getDb()
+    .select()
+    .from(project)
+    .where(and(eq(project.id, id), isNull(project.deletedAt)))
+    .get()
   return row ?? null
 }
 
 export function createProject(input: ProjectCreateInput): Project {
+  assertWritable()
   const now = Date.now()
   return getDb()
     .insert(project)
@@ -58,6 +79,7 @@ export function createProject(input: ProjectCreateInput): Project {
 }
 
 export function updateProject(input: ProjectUpdateInput): Project {
+  assertWritable()
   const patch = pickDefined(input, PROJECT_IMMUTABLE)
   const row = getDb()
     .update(project)
@@ -69,8 +91,11 @@ export function updateProject(input: ProjectUpdateInput): Project {
   return row
 }
 
+/** 移入回收站（软删除）；children 保留，彻底删除时由外键级联清理 */
 export function deleteProject(id: number): void {
-  getDb().delete(project).where(eq(project.id, id)).run()
+  assertWritable()
+  const now = Date.now()
+  getDb().update(project).set({ deletedAt: now, updatedAt: now }).where(eq(project.id, id)).run()
 }
 
 /* --------------------------------- 章节细纲 -------------------------------- */
@@ -79,19 +104,26 @@ export function listBriefs(projectId: number): ChapterBrief[] {
   return getDb()
     .select()
     .from(chapterBrief)
-    .where(eq(chapterBrief.projectId, projectId))
+    .where(and(eq(chapterBrief.projectId, projectId), isNull(chapterBrief.deletedAt)))
     .orderBy(asc(chapterBrief.chapterNo))
     .all()
 }
 
 /** 保存细纲：按 (projectId, chapterNo) 唯一，存在即更新，否则新建 */
 export function saveBrief(input: BriefSaveInput): ChapterBrief {
+  assertWritable()
   const db = getDb()
   const now = Date.now()
   const existing = db
     .select()
     .from(chapterBrief)
-    .where(and(eq(chapterBrief.projectId, input.projectId), eq(chapterBrief.chapterNo, input.chapterNo)))
+    .where(
+      and(
+        eq(chapterBrief.projectId, input.projectId),
+        eq(chapterBrief.chapterNo, input.chapterNo),
+        isNull(chapterBrief.deletedAt)
+      )
+    )
     .get()
 
   if (existing) {
@@ -126,8 +158,27 @@ export function saveBrief(input: BriefSaveInput): ChapterBrief {
     .get()
 }
 
+/** 删除章节 = 给 chapter_brief 与其所有 chapter_draft 打同一个时间戳（便于成组恢复） */
 export function deleteBrief(id: number): void {
-  getDb().delete(chapterBrief).where(eq(chapterBrief.id, id)).run()
+  assertWritable()
+  const db = getDb()
+  const row = db.select().from(chapterBrief).where(eq(chapterBrief.id, id)).get()
+  if (!row) return
+  const now = Date.now()
+  db.update(chapterBrief)
+    .set({ deletedAt: now, updatedAt: now })
+    .where(eq(chapterBrief.id, id))
+    .run()
+  db.update(chapterDraft)
+    .set({ deletedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(chapterDraft.projectId, row.projectId),
+        eq(chapterDraft.chapterNo, row.chapterNo),
+        isNull(chapterDraft.deletedAt)
+      )
+    )
+    .run()
 }
 
 /* ---------------------------------- 正文 --------------------------------- */
@@ -136,13 +187,14 @@ export function listDrafts(projectId: number): ChapterDraft[] {
   return getDb()
     .select()
     .from(chapterDraft)
-    .where(eq(chapterDraft.projectId, projectId))
+    .where(and(eq(chapterDraft.projectId, projectId), isNull(chapterDraft.deletedAt)))
     .orderBy(asc(chapterDraft.chapterNo), desc(chapterDraft.version))
     .all()
 }
 
 /** 保存草稿：按 (projectId, chapterNo, version) 唯一，存在即更新，否则新建 */
 export function saveDraft(input: DraftSaveInput): ChapterDraft {
+  assertWritable()
   const db = getDb()
   const now = Date.now()
   const version = input.version ?? 1
@@ -153,7 +205,8 @@ export function saveDraft(input: DraftSaveInput): ChapterDraft {
       and(
         eq(chapterDraft.projectId, input.projectId),
         eq(chapterDraft.chapterNo, input.chapterNo),
-        eq(chapterDraft.version, version)
+        eq(chapterDraft.version, version),
+        isNull(chapterDraft.deletedAt)
       )
     )
     .get()
@@ -189,5 +242,7 @@ export function saveDraft(input: DraftSaveInput): ChapterDraft {
 }
 
 export function deleteDraft(id: number): void {
-  getDb().delete(chapterDraft).where(eq(chapterDraft.id, id)).run()
+  assertWritable()
+  const now = Date.now()
+  getDb().update(chapterDraft).set({ deletedAt: now, updatedAt: now }).where(eq(chapterDraft.id, id)).run()
 }

@@ -54,7 +54,37 @@ export const IpcChannel = {
   pipelineEvent: 'pipeline:event',
   appDbPath: 'app:db-path',
   appMcpEntry: 'app:mcp-entry',
-  appMcpLaunch: 'app:mcp-launch'
+  appMcpLaunch: 'app:mcp-launch',
+  appPickFolder: 'app:pick-folder',
+  appOpenPath: 'app:open-path',
+  appClearCache: 'app:clear-cache',
+  /** M6：多书库 */
+  libraryBootstrap: 'library:bootstrap',
+  libraryList: 'library:list',
+  libraryCreate: 'library:create',
+  libraryAdd: 'library:add',
+  librarySwitch: 'library:switch',
+  libraryLocate: 'library:locate',
+  libraryRemove: 'library:remove',
+  libraryRename: 'library:rename',
+  libraryPrecheck: 'library:precheck',
+  libraryMigrate: 'library:migrate',
+  libraryDismissMigration: 'library:dismiss-migration',
+  librarySettings: 'library:settings',
+  librarySaveSettings: 'library:save-settings',
+  /** 主进程 → 渲染进程：迁移进度推送 */
+  libraryMigrationEvent: 'library:migration-event',
+  /** M6：回收站 */
+  trashList: 'trash:list',
+  trashRestore: 'trash:restore',
+  trashPurge: 'trash:purge',
+  trashEmpty: 'trash:empty',
+  /** M6：备份 */
+  backupList: 'backup:list',
+  backupCreate: 'backup:create',
+  backupRestore: 'backup:restore',
+  backupDelete: 'backup:delete',
+  backupReveal: 'backup:reveal'
 } as const
 
 export type IpcChannelName = (typeof IpcChannel)[keyof typeof IpcChannel]
@@ -207,3 +237,28 @@ export const exportSchema = z.object({
 
 /** 本地路径（打开导出目录等） */
 export const pathSchema = z.string().min(1).max(1_000)
+
+/* ============================ M6：书库与生命周期 ============================ */
+
+export const libraryNameSchema = z.string().trim().min(1, '书库名称不能为空').max(80)
+export const libraryPathSchema = z.string().trim().min(1, '路径不能为空').max(1_000)
+export const libraryIdSchema = z.string().min(1).max(80)
+
+export const libraryCreateSchema = z.object({ name: libraryNameSchema, path: libraryPathSchema })
+export const libraryLocateSchema = z.object({ id: libraryIdSchema, path: libraryPathSchema })
+export const libraryRemoveSchema = z.object({ id: libraryIdSchema, deleteFiles: z.boolean() })
+export const libraryRenameSchema = z.object({ id: libraryIdSchema, name: libraryNameSchema })
+export const libraryMigrateSchema = z.object({ targetPath: libraryPathSchema })
+
+export const librarySettingsSchema = z.object({
+  trashRetentionDays: z.union([z.literal(0), z.literal(7), z.literal(30), z.literal(90)]).optional(),
+  cleanCacheOnQuit: z.boolean().optional(),
+  autoBackup: z.boolean().optional()
+})
+
+export const trashItemSchema = z.object({
+  kind: z.enum(['project', 'chapter']),
+  id: idSchema
+})
+
+export const backupNameSchema = z.string().min(1).max(200)

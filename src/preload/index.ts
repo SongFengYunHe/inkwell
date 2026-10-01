@@ -8,7 +8,10 @@ import type {
   GenerateEvent,
   GenerateStartInput,
   InkwellApi,
+  LibrarySettings,
   LlmRoleName,
+  MigrationEvent,
+  MigrationRequest,
   PipelineEvent,
   PipelineStartInput,
   ProjectCreateInput,
@@ -117,8 +120,47 @@ const api: InkwellApi = {
   app: {
     dbPath: () => ipcRenderer.invoke(IpcChannel.appDbPath),
     mcpEntry: () => ipcRenderer.invoke(IpcChannel.appMcpEntry),
-    mcpLaunch: () => ipcRenderer.invoke(IpcChannel.appMcpLaunch)
+    mcpLaunch: () => ipcRenderer.invoke(IpcChannel.appMcpLaunch),
+    pickFolder: () => ipcRenderer.invoke(IpcChannel.appPickFolder),
+    openPath: (path: string) => ipcRenderer.invoke(IpcChannel.appOpenPath, path),
+    clearCache: () => ipcRenderer.invoke(IpcChannel.appClearCache)
+  },
+  library: {
+    bootstrap: () => ipcRenderer.invoke(IpcChannel.libraryBootstrap),
+    list: () => ipcRenderer.invoke(IpcChannel.libraryList),
+    create: (input: { name: string; path: string }) => ipcRenderer.invoke(IpcChannel.libraryCreate, input),
+    add: (input: { name: string; path: string }) => ipcRenderer.invoke(IpcChannel.libraryAdd, input),
+    switch: (id: string) => ipcRenderer.invoke(IpcChannel.librarySwitch, id),
+    locate: (input: { id: string; path: string }) => ipcRenderer.invoke(IpcChannel.libraryLocate, input),
+    remove: (input: { id: string; deleteFiles: boolean }) => ipcRenderer.invoke(IpcChannel.libraryRemove, input),
+    rename: (input: { id: string; name: string }) => ipcRenderer.invoke(IpcChannel.libraryRename, input),
+    precheck: (path: string) => ipcRenderer.invoke(IpcChannel.libraryPrecheck, path),
+    migrate: (input: MigrationRequest) => ipcRenderer.invoke(IpcChannel.libraryMigrate, input),
+    dismissMigration: () => ipcRenderer.invoke(IpcChannel.libraryDismissMigration),
+    settings: () => ipcRenderer.invoke(IpcChannel.librarySettings),
+    saveSettings: (settings: Partial<LibrarySettings>) =>
+      ipcRenderer.invoke(IpcChannel.librarySaveSettings, settings)
+  },
+  trash: {
+    list: () => ipcRenderer.invoke(IpcChannel.trashList),
+    restore: (item: { kind: 'project' | 'chapter'; id: number }) => ipcRenderer.invoke(IpcChannel.trashRestore, item),
+    purge: (item: { kind: 'project' | 'chapter'; id: number }) => ipcRenderer.invoke(IpcChannel.trashPurge, item),
+    empty: () => ipcRenderer.invoke(IpcChannel.trashEmpty)
+  },
+  backup: {
+    list: () => ipcRenderer.invoke(IpcChannel.backupList),
+    create: () => ipcRenderer.invoke(IpcChannel.backupCreate),
+    restore: (name: string) => ipcRenderer.invoke(IpcChannel.backupRestore, name),
+    remove: (name: string) => ipcRenderer.invoke(IpcChannel.backupDelete, name),
+    reveal: () => ipcRenderer.invoke(IpcChannel.backupReveal)
+  },
+  onMigrationEvent: (listener: (event: MigrationEvent) => void) => {
+    const handler = (_event: IpcRendererEvent, payload: MigrationEvent): void => listener(payload)
+    ipcRenderer.on(IpcChannel.libraryMigrationEvent, handler)
+    return () => {
+      ipcRenderer.removeListener(IpcChannel.libraryMigrationEvent, handler)
+    }
   }
-}
+} as InkwellApi
 
 contextBridge.exposeInMainWorld('inkwell', api)

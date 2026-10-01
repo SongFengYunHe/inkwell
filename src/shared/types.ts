@@ -28,6 +28,8 @@ export interface Project {
   globalGuidance: string
   /** L1 总大纲 */
   coreOutline: string
+  /** 软删除时间戳；非空表示已移入回收站 */
+  deletedAt: number | null
   createdAt: number
   updatedAt: number
 }
@@ -54,6 +56,8 @@ export interface ChapterBrief {
   /** 用户额外要求 */
   userGuidance: string
   notes: string
+  /** 软删除时间戳；非空表示已移入回收站 */
+  deletedAt: number | null
   createdAt: number
   updatedAt: number
 }
@@ -70,6 +74,8 @@ export interface ChapterDraft {
   source: string
   content: string
   wordCount: number
+  /** 软删除时间戳；非空表示已移入回收站 */
+  deletedAt: number | null
   createdAt: number
   updatedAt: number
 }
@@ -537,6 +543,125 @@ export interface McpLaunchConfig {
   configJson: string
 }
 
+/* ============================ M6：书库与生命周期 ============================ */
+
+/** 书库元信息（config.json 中登记的一条） */
+export interface LibraryInfo {
+  id: string
+  name: string
+  /** 书库根目录绝对路径（inkwell.db / backups / exports / covers 所在处） */
+  path: string
+  createdAt: number
+  lastOpenedAt: number
+  /** 该库当前 schema 版本（打开后刷新，未打开时为 null） */
+  schemaVersion: number | null
+  /** 是否可直接打开（路径存在且库文件完好） */
+  available: boolean
+}
+
+/** 启动时解析书库的结果 */
+export interface LibraryBootstrap {
+  /** activeLibraryId，无可用书库时为 null */
+  activeLibraryId: string | null
+  libraries: LibraryInfo[]
+  /** 需要在 UI 上提示「书库找不到」，引导重新定位 / 挂载 / 新建 */
+  needsAttention: boolean
+  attentionMessage: string
+  /** 检测到 userData 旧库且尚未引导迁移 */
+  pendingMigration: boolean
+  /** 旧库（%APPDATA%/inkwell/inkwell.db）是否存在 */
+  legacyDbPath: string | null
+  legacyDbExists: boolean
+  /** 当前实际打开的数据库文件（无书库时为空串） */
+  databasePath: string
+}
+
+/** 书库目录预检结论（创建 / 挂载 / 迁移共用） */
+export interface LibraryPrecheck {
+  path: string
+  /** 目录是否存在且可写 */
+  writable: boolean
+  /** 是否已存在 inkwell.db */
+  hasDatabase: boolean
+  /** 命中的同步盘（OneDrive/Dropbox/坚果云…），命中时需降级 journal_mode */
+  syncProvider: string | null
+  /** 是否 UNC / 网络盘 */
+  networkPath: boolean
+  /** 可用空间（字节）；探测失败为 null */
+  freeBytes: number | null
+  /** 当前库大小（字节），用于估算所需空间 */
+  sourceBytes: number
+  /** 明确阻止操作的原因（为空表示可继续） */
+  blockingError: string
+  /** 强警告文案（可继续，但需用户确认） */
+  warnings: string[]
+}
+
+/** 回收站条目（项目级 / 章节级统一视图） */
+export type TrashItem = {
+  kind: 'project' | 'chapter'
+  /** 项目 id 或细纲 id */
+  id: number
+  projectId: number
+  projectName: string
+  chapterNo: number | null
+  title: string
+  /** 该条目连带影响的正文章节数（章节级：该章草稿数） */
+  draftCount: number
+  deletedAt: number
+  /** 到期自动清理时间戳（null 表示永久保留） */
+  expiresAt: number | null
+}
+
+/** 自动备份条目 */
+export interface BackupInfo {
+  name: string
+  path: string
+  bytes: number
+  createdAt: number
+  /** 触发来源：startup | migrate | interval | manual | pre-restore */
+  reason: string
+}
+
+/** 书库迁移进度（主进程 → 渲染进程推送） */
+export interface MigrationProgress {
+  phase: 'precheck' | 'vacuum' | 'copy' | 'verify' | 'switch' | 'done'
+  message: string
+  /** 0–100，未知时为 -1 */
+  percent: number
+}
+
+export interface MigrationRequest {
+  /** 目标书库根目录 */
+  targetPath: string
+}
+
+export interface MigrationResult {
+  ok: boolean
+  library: LibraryInfo | null
+  /** 失败原因（ok=false 时） */
+  error: string
+  /** 目标半成品是否已清理 */
+  rolledBack: boolean
+}
+
+/** 迁移向导事件 */
+export type MigrationEvent =
+  | { type: 'progress'; progress: MigrationProgress }
+  | { type: 'done'; result: MigrationResult }
+
+/** 回收站保留期设置 */
+export type TrashRetention = 7 | 30 | 90 | 0
+
+/** 书库与备份相关设置（存 config.json） */
+export interface LibrarySettings {
+  trashRetentionDays: TrashRetention
+  /** 退出时清理 Electron 运行时缓存 */
+  cleanCacheOnQuit: boolean
+  /** 自动备份开关 */
+  autoBackup: boolean
+}
+
 /** 预加载脚本向渲染进程暴露的 API 契约 */
 export interface InkwellApi {
   project: {
@@ -637,5 +762,60 @@ export interface InkwellApi {
     mcpEntry(): Promise<string>
     /** MCP Server 的启动方式（含可直接粘贴的配置 JSON） */
     mcpLaunch(): Promise<McpLaunchConfig>
+    /** 打开目录选择对话框，返回所选目录（取消为 null） */
+    pickFolder(): Promise<string | null>
+    /** 在系统文件管理器中打开路径 */
+    openPath(path: string): Promise<void>
+    /** 清理 Electron 运行时缓存 */
+    clearCache(): Promise<{ freedBytes: number }>
   }
+  /** M6：多书库（像 VSCode 工作区一样自由切换） */
+  library: {
+    /** 解析启动态：活动库 / 全部库 / 是否需要引导 */
+    bootstrap(): Promise<LibraryBootstrap>
+    list(): Promise<LibraryInfo[]>
+    /** 在指定目录新建书库（目录可不存在，会创建） */
+    create(input: { name: string; path: string }): Promise<LibraryInfo>
+    /** 挂载一个已存在的书库目录 */
+    add(input: { name: string; path: string }): Promise<LibraryInfo>
+    /** 切换活动书库（先关旧库再开新库） */
+    switch(id: string): Promise<{ ok: boolean }>
+    /** 库被移动/改名后重新指路 */
+    locate(input: { id: string; path: string }): Promise<LibraryInfo>
+    /** 从列表移除（deleteFiles 为 true 时同时删除磁盘文件） */
+    remove(input: { id: string; deleteFiles: boolean }): Promise<{ ok: boolean }>
+    rename(input: { id: string; name: string }): Promise<{ ok: boolean }>
+    /** 创库 / 挂载前的目录预检 */
+    precheck(path: string): Promise<LibraryPrecheck>
+    /** 启动迁移向导：把旧 userData 库迁到目标目录（可中断、可回滚） */
+    migrate(input: MigrationRequest): Promise<MigrationResult>
+    /** 放弃迁移引导（之后不再自动弹出） */
+    dismissMigration(): Promise<void>
+    /** 读取 / 写入书库相关设置 */
+    settings(): Promise<LibrarySettings>
+    saveSettings(settings: Partial<LibrarySettings>): Promise<LibrarySettings>
+  }
+  /** M6：回收站（软删除） */
+  trash: {
+    list(): Promise<TrashItem[]>
+    /** 恢复条目；章节号冲突时自动排到末尾 */
+    restore(item: { kind: 'project' | 'chapter'; id: number }): Promise<{ ok: boolean; chapterNo?: number }>
+    /** 彻底删除单条 */
+    purge(item: { kind: 'project' | 'chapter'; id: number }): Promise<void>
+    /** 清空回收站 */
+    empty(): Promise<{ removed: number }>
+  }
+  /** M6：自动备份 */
+  backup: {
+    list(): Promise<BackupInfo[]>
+    /** 立即备份一份（VACUUM INTO） */
+    create(): Promise<BackupInfo>
+    /** 恢复某份备份（恢复前自动先备份当前库） */
+    restore(name: string): Promise<{ ok: boolean }>
+    remove(name: string): Promise<void>
+    /** 在文件管理器中显示备份目录 */
+    reveal(): Promise<void>
+  }
+  /** 主进程 → 渲染进程：迁移进度推送通道 */
+  onMigrationEvent(listener: (event: MigrationEvent) => void): () => void
 }

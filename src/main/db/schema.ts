@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import { sqliteTable, integer, text, index, uniqueIndex } from 'drizzle-orm/sqlite-core'
 import type { AuditReport, CharacterStateDelta, ContinuityFacts, ThreadUpdate } from '@shared/types'
 
@@ -22,6 +23,8 @@ export const project = sqliteTable('project', {
   goldenFinger: text('golden_finger').notNull().default(''),
   globalGuidance: text('global_guidance').notNull().default(''),
   coreOutline: text('core_outline').notNull().default(''),
+  /** 软删除时间戳；非空表示已移入回收站 */
+  deletedAt: integer('deleted_at'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull()
 })
@@ -45,11 +48,16 @@ export const chapterBrief = sqliteTable(
     suspenseHook: text('suspense_hook').notNull().default(''),
     userGuidance: text('user_guidance').notNull().default(''),
     notes: text('notes').notNull().default(''),
+    /** 软删除时间戳；非空表示已移入回收站 */
+    deletedAt: integer('deleted_at'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull()
   },
   (t) => [
-    uniqueIndex('chapter_brief_project_chapter_uq').on(t.projectId, t.chapterNo),
+    // 部分唯一索引：只约束未删除行，回收站中的行不占号
+    uniqueIndex('chapter_brief_project_chapter_uq')
+      .on(t.projectId, t.chapterNo)
+      .where(sql`deleted_at IS NULL`),
     index('chapter_brief_project_idx').on(t.projectId)
   ]
 )
@@ -68,11 +76,15 @@ export const chapterDraft = sqliteTable(
     source: text('source').notNull().default('write'),
     content: text('content').notNull().default(''),
     wordCount: integer('word_count').notNull().default(0),
+    /** 软删除时间戳；非空表示已移入回收站 */
+    deletedAt: integer('deleted_at'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull()
   },
   (t) => [
-    uniqueIndex('chapter_draft_project_chapter_version_uq').on(t.projectId, t.chapterNo, t.version),
+    uniqueIndex('chapter_draft_project_chapter_version_uq')
+      .on(t.projectId, t.chapterNo, t.version)
+      .where(sql`deleted_at IS NULL`),
     index('chapter_draft_project_idx').on(t.projectId)
   ]
 )

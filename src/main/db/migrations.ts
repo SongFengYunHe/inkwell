@@ -239,5 +239,27 @@ export const migrations: Migration[] = [
       )`,
       `CREATE UNIQUE INDEX pipeline_step_run_chapter_step_uq ON pipeline_step (run_id, chapter_no, step)`
     ]
+  },
+  {
+    version: 5,
+    name: 'soft_delete',
+    statements: [
+      // 软删除：所有查询默认 WHERE deleted_at IS NULL（repository 层统一封装），删除即打时间戳
+      `ALTER TABLE project ADD COLUMN deleted_at INTEGER`,
+      `ALTER TABLE chapter_brief ADD COLUMN deleted_at INTEGER`,
+      `ALTER TABLE chapter_draft ADD COLUMN deleted_at INTEGER`,
+
+      `CREATE INDEX idx_project_deleted ON project (deleted_at)`,
+      `CREATE INDEX idx_brief_deleted ON chapter_brief (deleted_at)`,
+      `CREATE INDEX idx_draft_deleted ON chapter_draft (deleted_at)`,
+
+      // 唯一约束改为「部分索引」：只约束未删除的行，
+      // 否则删掉第 N 章后无法再建第 N 章，回收站里的行会永久占号。
+      `DROP INDEX chapter_brief_project_chapter_uq`,
+      `CREATE UNIQUE INDEX chapter_brief_project_chapter_uq ON chapter_brief (project_id, chapter_no) WHERE deleted_at IS NULL`,
+
+      `DROP INDEX chapter_draft_project_chapter_version_uq`,
+      `CREATE UNIQUE INDEX chapter_draft_project_chapter_version_uq ON chapter_draft (project_id, chapter_no, version) WHERE deleted_at IS NULL`
+    ]
   }
 ]
