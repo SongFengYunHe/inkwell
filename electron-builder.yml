@@ -20,6 +20,9 @@ publish:
   - provider: github
     owner: SongFengYunHe
     repo: inkwell
+    # 直接发正式版（不加这一行 electron-builder 会建 Draft，需要手工点发布；
+    # 而 electron-updater 只读「已发布」的 latest.yml，Draft 会导致检查不到更新）
+    releaseType: release
 
 # 只打包运行时真正需要的内容：编译产物 + 包描述；生产依赖由 electron-builder 自动纳入
 files:

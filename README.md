@@ -270,6 +270,9 @@ git push origin v1.0.0        # 触发构建 + 发布 release
 | 更新行为 | 只自动**检查**并提示；下载与安装都必须由你在设置页点按钮触发，不会自动重启应用 |
 | 代码签名 | **当前未签名**：首次运行会有 SmartScreen 提示。配置好证书后在 CI 注入 `CSC_LINK`（base64/pfx 路径）与 `CSC_KEY_PASSWORD` 即可自动签名，无需改代码 |
 | 回滚 | Release 可手动删除并回退 `latest.yml`；升级前应用会自动备份书库（含非空库的 pre-migrate 快照） |
+| 发布形态 | `publish.releaseType: release`：tag 推上去即**直接发布正式版**（不带这个配置 electron-builder 会建 Draft，而 electron-updater 只读已发布的 `latest.yml`，Draft 会导致「检查更新」永远说已是最新） |
+
+> 已发布：**v1.0.0**（[Releases](https://github.com/SongFengYunHe/inkwell/releases/tag/v1.0.0)，含 `Inkwell-1.0.0-x64-setup.exe` 与 `latest.yml`）。
 
 ```powershell
 npm run clean:release   # 单独清空 release/
