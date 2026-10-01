@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
 import { dirname, join, normalize, resolve } from 'node:path'
 import { app } from 'electron'
 import type { LibraryBootstrap, LibraryInfo, LibrarySettings } from '@shared/types'
@@ -255,6 +255,31 @@ export function dismissMigration(): void {
     current.migratedFromUserData = true
     current.migrationDismissed = true
   })
+}
+
+/** 迁移完成后清理 userData 里的旧库文件（数据库 + WAL/SHM），返回释放的字节数 */
+export function purgeLegacyData(): { ok: boolean; freedBytes: number } {
+  const dbPath = getLegacyDbPath()
+  const active = getActiveEntry()
+  // 安全护栏：活动库仍指向旧位置时不允许删除
+  if (active && resolve(active.path) === resolve(dirname(dbPath))) {
+    throw new Error('当前书库仍指向旧位置，无法清理')
+  }
+  let freedBytes = 0
+  for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+    try {
+      if (!existsSync(file)) continue
+      freedBytes += statSync(file).size
+      rmSync(file, { force: true })
+    } catch {
+      // 单个文件删除失败不影响其他
+    }
+  }
+  updateConfig((current) => {
+    current.migratedFromUserData = true
+    current.migrationDismissed = true
+  })
+  return { ok: true, freedBytes }
 }
 
 /**

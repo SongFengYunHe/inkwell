@@ -60,6 +60,13 @@ export default function Bookshelf() {
           <ThemeToggle />
           <button
             type="button"
+            onClick={() => setView('library')}
+            className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm text-stone-600 transition hover:bg-stone-50"
+          >
+            书库
+          </button>
+          <button
+            type="button"
             onClick={() => setView('settings')}
             className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm text-stone-600 transition hover:bg-stone-50"
           >
@@ -173,7 +180,7 @@ export default function Bookshelf() {
                     }}
                     className="self-end text-xs text-stone-400 opacity-0 transition hover:text-red-600 group-hover:opacity-100"
                   >
-                    删除
+                    移入回收站
                   </button>
                 </article>
               ))}

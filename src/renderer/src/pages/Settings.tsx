@@ -1,19 +1,23 @@
 import { useEffect, useState } from 'react'
 import AgentPanel from '../components/AgentPanel'
+import BackupPanel from '../components/BackupPanel'
 import ProviderPanel from '../components/ProviderPanel'
 import RoutePanel from '../components/RoutePanel'
+import TrashPanel from '../components/TrashPanel'
 import UsagePanel from '../components/UsagePanel'
 import ThemeToggle from '../components/ThemeToggle'
 import { useAppStore } from '../stores/appStore'
 
-type SettingsTab = 'official' | 'agent' | 'proxy' | 'route' | 'usage'
+type SettingsTab = 'official' | 'agent' | 'proxy' | 'route' | 'usage' | 'data' | 'trash'
 
 const TABS: Array<{ key: SettingsTab; label: string }> = [
   { key: 'official', label: '官方 API（BYOK）' },
   { key: 'agent', label: 'Agent 模式（MCP）' },
   { key: 'proxy', label: '自定义端点' },
   { key: 'route', label: '角色-模型路由' },
-  { key: 'usage', label: '用量' }
+  { key: 'usage', label: '用量' },
+  { key: 'data', label: '数据与备份' },
+  { key: 'trash', label: '回收站' }
 ]
 
 export default function Settings() {
@@ -41,7 +45,14 @@ export default function Settings() {
           <h1 className="text-base font-medium">设置 · 模型接入</h1>
           <p className="text-xs text-stone-400">三种接入方式可混用；密钥经系统级加密后仅存本地。</p>
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setView('library')}
+            className="rounded-lg border border-stone-200 px-3 py-1.5 text-sm text-stone-600 transition hover:bg-stone-50"
+          >
+            书库管理
+          </button>
           <ThemeToggle />
         </div>
       </header>
@@ -69,6 +80,8 @@ export default function Settings() {
         {tab === 'proxy' && <ProviderPanel kind="custom-reverse-proxy" />}
         {tab === 'route' && <RoutePanel />}
         {tab === 'usage' && <UsagePanel />}
+        {tab === 'data' && <BackupPanel />}
+        {tab === 'trash' && <TrashPanel />}
       </div>
     </div>
   )

@@ -26,11 +26,12 @@ import type {
   FixResult,
   PipelineEvent,
   PipelineRun,
-  TruthFiles
+  TruthFiles,
+  LibraryBootstrap
 } from '@shared/types'
 import { create } from 'zustand'
 
-export type View = 'bookshelf' | 'workspace' | 'settings'
+export type View = 'bookshelf' | 'workspace' | 'settings' | 'library'
 
 export type Theme = 'light' | 'dark'
 
@@ -58,6 +59,12 @@ interface PipelineState {
   requestId: string
   run: PipelineRun | null
   message: string
+}
+
+/** M6：可撤销操作（删除即移入回收站，5 秒内可撤销） */
+interface UndoState {
+  message: string
+  run: () => Promise<void>
 }
 
 interface AppState {
@@ -99,6 +106,13 @@ interface AppState {
   theme: Theme
   /** M5：专注模式（隐藏所有 chrome，只留正文） */
   focusMode: boolean
+
+  /** M6：书库启动态（活动库 / 全部库 / 是否需要引导迁移） */
+  bootstrap: LibraryBootstrap | null
+  /** M6：迁移向导是否打开 */
+  migrationOpen: boolean
+  /** M6：可撤销提示（5 秒） */
+  undo: UndoState | null
 
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
@@ -174,6 +188,13 @@ interface AppState {
   runExport: (formats: ExportFormat[]) => Promise<void>
   openExportDir: (path: string) => Promise<void>
   clearExportResult: () => void
+
+  /* ----------------------------- M6：书库与撤销 ----------------------------- */
+  loadBootstrap: () => Promise<void>
+  openMigration: () => void
+  closeMigration: () => void
+  dismissUndo: () => void
+  runUndo: () => Promise<void>
 }
 
 /** 统一收敛错误信息，避免每个动作各写一遍 try/catch */
@@ -220,6 +241,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   exportResult: null,
   theme: initialTheme(),
   focusMode: false,
+  bootstrap: null,
+  migrationOpen: false,
+  undo: null,
 
   setTheme: (theme) => {
     localStorage.setItem(THEME_KEY, theme)
@@ -257,9 +281,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeProject: async (id) => {
+    const removed = get().projects.find((item) => item.id === id)
     await guard(set, () => window.inkwell.project.remove(id))
     if (get().activeProjectId === id) set({ activeProjectId: null, briefs: [], drafts: [] })
     await get().loadProjects()
+    if (removed) {
+      set({
+        undo: {
+          message: `已把「${removed.name}」移入回收站`,
+          run: async () => {
+            await window.inkwell.trash.restore({ kind: 'project', id })
+            await get().loadProjects()
+          }
+        }
+      })
+    }
   },
 
   importVelaProject: async () => {
@@ -305,8 +341,25 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeBrief: async (id) => {
+    const removed = get().briefs.find((item) => item.id === id)
     await guard(set, () => window.inkwell.brief.remove(id))
     await get().reloadBriefs()
+    await get().reloadDrafts()
+    if (removed) {
+      set({
+        undo: {
+          message: `已把第 ${removed.chapterNo} 章移入回收站`,
+          run: async () => {
+            const result = await window.inkwell.trash.restore({ kind: 'chapter', id })
+            await get().reloadBriefs()
+            await get().reloadDrafts()
+            if (result.chapterNo && result.chapterNo !== removed.chapterNo) {
+              set({ notice: `原章节号已被占用，已恢复到第 ${result.chapterNo} 章` })
+            }
+          }
+        }
+      })
+    }
   },
 
   expandBrief: async (input) => {
@@ -321,8 +374,28 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeDraft: async (id) => {
+    const removed = get().drafts.find((item) => item.id === id)
     await guard(set, () => window.inkwell.draft.remove(id))
     await get().reloadDrafts()
+    if (removed) {
+      set({
+        undo: {
+          message: `已把第 ${removed.chapterNo} 章 v${removed.version} 移入回收站`,
+          run: async () => {
+            // 软删除行不占用唯一索引，按原版本号重建即可
+            await window.inkwell.draft.save({
+              projectId: removed.projectId,
+              chapterNo: removed.chapterNo,
+              version: removed.version,
+              status: removed.status,
+              source: removed.source,
+              content: removed.content
+            })
+            await get().reloadDrafts()
+          }
+        }
+      })
+    }
   },
 
   setCurrentChapter: (chapterNo) => {
@@ -714,5 +787,27 @@ export const useAppStore = create<AppState>((set, get) => ({
     await window.inkwell.export.openDir(path)
   },
 
-  clearExportResult: () => set({ exportResult: null })
+  clearExportResult: () => set({ exportResult: null }),
+
+  /* ----------------------------- M6：书库与撤销 ----------------------------- */
+
+  loadBootstrap: async () => {
+    const bootstrap = await guard(set, () => window.inkwell.library.bootstrap())
+    if (!bootstrap) return
+    set({ bootstrap })
+    // 检测到 userData 旧库且未引导过 → 首次启动自动弹出迁移向导
+    if (bootstrap.pendingMigration) set({ migrationOpen: true })
+  },
+
+  openMigration: () => set({ migrationOpen: true }),
+  closeMigration: () => set({ migrationOpen: false }),
+
+  dismissUndo: () => set({ undo: null }),
+
+  runUndo: async () => {
+    const undo = get().undo
+    if (!undo) return
+    set({ undo: null })
+    await guard(set, undo.run)
+  }
 }))

@@ -80,6 +80,7 @@ import {
   getSettings,
   listLibraries,
   locateLibrary,
+  purgeLegacyData,
   removeLibrary,
   renameLibrary,
   saveSettings,
@@ -452,6 +453,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.libraryDismissMigration, () => {
     dismissMigration()
   })
+  ipcMain.handle(IpcChannel.libraryPurgeLegacy, () => purgeLegacyData())
 
   ipcMain.handle(IpcChannel.libraryMigrate, (event, raw: unknown) => {
     const input = libraryMigrateSchema.parse(raw)

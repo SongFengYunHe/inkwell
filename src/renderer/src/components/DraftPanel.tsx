@@ -279,7 +279,7 @@ export default function DraftPanel({ focus = false }: { focus?: boolean }) {
             onClick={() => void removeDraft(current.id)}
             className={`${BUTTON_GHOST} hover:bg-red-50 hover:text-red-600`}
           >
-            删除本版本
+            移入回收站
           </button>
           <span className="text-xs text-stone-400">
             v{current.version} · 来源 {current.source} · {dirty ? '有未保存修改' : '已保存'}

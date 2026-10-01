@@ -72,6 +72,7 @@ export const IpcChannel = {
   libraryDismissMigration: 'library:dismiss-migration',
   librarySettings: 'library:settings',
   librarySaveSettings: 'library:save-settings',
+  libraryPurgeLegacy: 'library:purge-legacy',
   /** 主进程 → 渲染进程：迁移进度推送 */
   libraryMigrationEvent: 'library:migration-event',
   /** M6：回收站 */

@@ -254,7 +254,7 @@ export default function BriefPanel() {
                 onClick={() => void removeBrief(brief.id)}
                 className={`${BUTTON_GHOST} hover:bg-red-50 hover:text-red-600`}
               >
-                删除
+                移入回收站
               </button>
               <span className="text-xs text-stone-400">
                 已保存第 {brief.chapterNo} 章 · 下一章「{chapterTitle(brief.chapterNo + 1)}」

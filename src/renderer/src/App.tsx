@@ -1,7 +1,9 @@
 import { useEffect } from 'react'
 import Bookshelf from './pages/Bookshelf'
+import LibraryManager from './pages/LibraryManager'
 import Settings from './pages/Settings'
 import Workspace from './pages/Workspace'
+import MigrationWizard from './components/MigrationWizard'
 import { useAppStore } from './stores/appStore'
 
 export default function App() {
@@ -13,13 +15,19 @@ export default function App() {
   const clearNotice = useAppStore((s) => s.clearNotice)
   const theme = useAppStore((s) => s.theme)
   const loadProjects = useAppStore((s) => s.loadProjects)
+  const loadBootstrap = useAppStore((s) => s.loadBootstrap)
   const handleGenerateEvent = useAppStore((s) => s.handleGenerateEvent)
   const handleWizardEvent = useAppStore((s) => s.handleWizardEvent)
   const handlePipelineEvent = useAppStore((s) => s.handlePipelineEvent)
+  const undo = useAppStore((s) => s.undo)
+  const dismissUndo = useAppStore((s) => s.dismissUndo)
+  const runUndo = useAppStore((s) => s.runUndo)
+  const migrationOpen = useAppStore((s) => s.migrationOpen)
 
   useEffect(() => {
+    void loadBootstrap()
     void loadProjects()
-  }, [loadProjects])
+  }, [loadBootstrap, loadProjects])
 
   // 深浅主题：切换 <html> 上的 dark 类（颜色由 global.css 统一重映射）
   useEffect(() => {
@@ -39,9 +47,18 @@ export default function App() {
     return window.inkwell.pipeline.onEvent(handlePipelineEvent)
   }, [handlePipelineEvent])
 
+  // 撤销提示 5 秒后自动消失
+  useEffect(() => {
+    if (!undo) return
+    const timer = window.setTimeout(() => dismissUndo(), 5000)
+    return () => window.clearTimeout(timer)
+  }, [undo, dismissUndo])
+
   const page =
     view === 'settings' ? (
       <Settings />
+    ) : view === 'library' ? (
+      <LibraryManager />
     ) : view === 'workspace' && activeProjectId !== null ? (
       <Workspace />
     ) : (
@@ -68,6 +85,30 @@ export default function App() {
         </div>
       )}
       <div className="min-h-0 flex-1">{page}</div>
+
+      {undo && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
+          <div className="pointer-events-auto flex items-center gap-4 rounded-xl bg-stone-900 px-4 py-2.5 text-sm text-white shadow-lg">
+            <span>{undo.message}</span>
+            <button
+              type="button"
+              onClick={() => void runUndo()}
+              className="rounded-md bg-amber-500 px-3 py-1 text-xs font-medium text-stone-900 transition hover:bg-amber-400"
+            >
+              撤销
+            </button>
+            <button
+              type="button"
+              onClick={dismissUndo}
+              className="text-xs text-stone-400 transition hover:text-white"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+      )}
+
+      {migrationOpen && <MigrationWizard />}
     </div>
   )
 }

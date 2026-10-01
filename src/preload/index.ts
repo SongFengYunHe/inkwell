@@ -137,6 +137,7 @@ const api: InkwellApi = {
     precheck: (path: string) => ipcRenderer.invoke(IpcChannel.libraryPrecheck, path),
     migrate: (input: MigrationRequest) => ipcRenderer.invoke(IpcChannel.libraryMigrate, input),
     dismissMigration: () => ipcRenderer.invoke(IpcChannel.libraryDismissMigration),
+    purgeLegacy: () => ipcRenderer.invoke(IpcChannel.libraryPurgeLegacy),
     settings: () => ipcRenderer.invoke(IpcChannel.librarySettings),
     saveSettings: (settings: Partial<LibrarySettings>) =>
       ipcRenderer.invoke(IpcChannel.librarySaveSettings, settings)

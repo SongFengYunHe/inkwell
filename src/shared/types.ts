@@ -791,6 +791,8 @@ export interface InkwellApi {
     migrate(input: MigrationRequest): Promise<MigrationResult>
     /** 放弃迁移引导（之后不再自动弹出） */
     dismissMigration(): Promise<void>
+    /** 迁移确认无误后清理 userData 里的旧库文件 */
+    purgeLegacy(): Promise<{ ok: boolean; freedBytes: number }>
     /** 读取 / 写入书库相关设置 */
     settings(): Promise<LibrarySettings>
     saveSettings(settings: Partial<LibrarySettings>): Promise<LibrarySettings>
