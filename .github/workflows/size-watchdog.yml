@@ -91,3 +91,14 @@ jobs:
           if ($unpackedMB -gt $unpackedLimitMB) { Write-Error "解包体积超标：${unpackedMB}MB > ${unpackedLimitMB}MB"; $failed = $true }
           if ($releaseMB -gt $releaseLimitMB) { Write-Error "release/ 总体积超标：${releaseMB}MB > ${releaseLimitMB}MB"; $failed = $true }
           if ($failed) { exit 1 }
+
+      # 把这次的产物挂到 Run 上：本地 release/ 被占用清理不掉时，用户仍能从 CI 下载到最新安装包
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: inkwell-installer
+          path: |
+            release/*-setup.exe
+            release/latest.yml
+          if-no-files-found: error
+          retention-days: 30
