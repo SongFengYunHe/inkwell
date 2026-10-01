@@ -3,6 +3,9 @@ import { saveDraft } from '../db/repositories'
 import { buildMessagesFor } from '../prompts/zh-CN'
 import { buildChapterContext } from './context'
 import { invokeChat } from './invoke'
+import { augmentContext } from '../search/recall'
+import { indexChapterDraft } from '../search/vector'
+import { recordGenerationRevision } from '../db/revision-repo'
 
 const SOURCE_BY_MODE: Record<GenerationMode, string> = {
   draft: 'write',
@@ -38,9 +41,12 @@ export async function runGeneration(options: RunGenerationOptions): Promise<Chap
     throw new Error('本章还没有正文，无法润色')
   }
 
+  // A3：按细纲召回相关回忆（不可用时返回原上下文，绝不阻断写作）
+  const augmented = await augmentContext(bundle, signal)
+
   const generated = await invokeChat({
     role: 'writer',
-    messages: buildMessagesFor(input.mode, context),
+    messages: buildMessagesFor(input.mode, augmented),
     signal,
     onDelta
   })
@@ -50,7 +56,7 @@ export async function runGeneration(options: RunGenerationOptions): Promise<Chap
 
   const content = input.mode === 'continue' ? `${context.existingContent.trim()}\n\n${trimmed}` : trimmed
 
-  return saveDraft({
+  const saved = saveDraft({
     projectId: input.projectId,
     chapterNo: input.chapterNo,
     version: (latestDraft?.version ?? 0) + 1,
@@ -58,4 +64,13 @@ export async function runGeneration(options: RunGenerationOptions): Promise<Chap
     source: SOURCE_BY_MODE[input.mode],
     content
   })
+
+  // A5：记一条修订（润色 / 重写）——续写与首次生成也算版本推进
+  if (input.mode === 'polish') recordGenerationRevision('polish', latestDraft, saved)
+  else if (input.mode === 'rewrite') recordGenerationRevision('rewrite', latestDraft, saved)
+
+  // A3：落盘后增量索引（开关关闭或无 embedder 时自动跳过，失败不影响写作）
+  await indexChapterDraft(input.projectId, input.chapterNo, saved.id, saved.content, signal)
+
+  return saved
 }

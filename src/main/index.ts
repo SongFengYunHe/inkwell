@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { BrowserWindow, app, safeStorage, shell } from 'electron'
-import { closeDatabase, getDatabasePath, initDatabase } from './db/client'
+import { closeDatabase, getDatabasePath, initDatabase, isDatabaseOpen } from './db/client'
 import { markStaleRunsInterrupted } from './db/pipeline-repo'
 import { registerIpcHandlers } from './ipc'
 import { setSecretCrypto } from './security/secrets'
@@ -13,10 +13,12 @@ import { runSmokeM5 } from './smoke-m5'
 import { runSmokeM6 } from './smoke-m6'
 import { runSmokeM7 } from './smoke-m7'
 import { runSmokeM8 } from './smoke-m8'
+import { runSmokeM9 } from './smoke-m9'
 import { bootstrapLibraries } from './library/registry'
 import { autoBackupEnabled, createBackup } from './db/backup'
 import { cleanupExpiredTrash } from './db/trash'
 import { gracefulShutdown, isQuitting, registerInterval } from './lifecycle'
+import { initAutoUpdate } from './update'
 
 const isSmokeRun = process.argv.includes('--smoke')
 const isLlmSmokeRun = process.argv.includes('--smoke-llm')
@@ -27,6 +29,7 @@ const isM5SmokeRun = process.argv.includes('--smoke-m5')
 const isM6SmokeRun = process.argv.includes('--smoke-m6')
 const isM7SmokeRun = process.argv.includes('--smoke-m7')
 const isM8SmokeRun = process.argv.includes('--smoke-m8')
+const isM9SmokeRun = process.argv.includes('--smoke-m9')
 
 const isAnySmokeRun =
   isSmokeRun ||
@@ -37,7 +40,8 @@ const isAnySmokeRun =
   isM5SmokeRun ||
   isM6SmokeRun ||
   isM7SmokeRun ||
-  isM8SmokeRun
+  isM8SmokeRun ||
+  isM9SmokeRun
 
 // 冒烟自检使用独立目录，且不做书库引导（沿用固定库路径）
 if (isAnySmokeRun) {
@@ -129,21 +133,38 @@ app.whenReady().then(() => {
     if (isM6SmokeRun) return void runSmokeM6()
     if (isM7SmokeRun) return void runSmokeM7()
     if (isM8SmokeRun) return void runSmokeM8()
+    if (isM9SmokeRun) return void runSmokeM9()
     return
   }
 
   // ---------- 正常启动：书库引导 ----------
-  const bootstrap = bootstrapLibraries()
-  console.log(`[inkwell] library ready: ${getDatabasePath() || '(none)'}`)
-  if (bootstrap.needsAttention) console.warn(`[inkwell] library attention: ${bootstrap.attentionMessage}`)
+  // 书库引导必须「永不抛错」：即使一个库都打不开，也要把窗口开起来，
+  // 让用户在「书库」页新建 / 重新定位，而不是看到一个打不开的应用。
+  try {
+    const bootstrap = bootstrapLibraries()
+    console.log(`[inkwell] library ready: ${getDatabasePath() || '(none)'}`)
+    if (bootstrap.needsAttention) {
+      console.warn(`[inkwell] library attention: ${bootstrap.attentionMessage}`)
+    }
+  } catch (error) {
+    console.error('[inkwell] library bootstrap failed:', error)
+  }
 
-  // 上次异常退出遗留的连写任务标记为中断，供用户从断点继续
-  const stale = markStaleRunsInterrupted()
-  if (stale > 0) console.log(`[inkwell] marked ${stale} stale pipeline run(s) as interrupted`)
+  // 上次异常退出遗留的连写任务标记为中断，供用户从断点继续（无库时跳过）
+  if (isDatabaseOpen()) {
+    try {
+      const stale = markStaleRunsInterrupted()
+      if (stale > 0) console.log(`[inkwell] marked ${stale} stale pipeline run(s) as interrupted`)
+    } catch (error) {
+      console.error('[inkwell] marking stale runs failed:', error)
+    }
+  }
 
   scheduleMaintenance()
   registerIpcHandlers()
   createWindow()
+  // A4：挂上自动更新（仅打包版生效；开发模式直接标记 unsupported）
+  initAutoUpdate()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -91,6 +91,7 @@ export const IpcChannel = {
   importAnalyze: 'import:analyze',
   importSession: 'import:session',
   importUpdateItem: 'import:update-item',
+  importUpdateItems: 'import:update-items',
   importCommit: 'import:commit',
   importCancel: 'import:cancel',
   importValidate: 'import:validate',
@@ -103,7 +104,32 @@ export const IpcChannel = {
   /** 主进程 → 渲染进程：整本审计进度推送 */
   auditEvent: 'audit:event',
   statSummary: 'stat:summary',
-  statSetGoal: 'stat:set-goal'
+  statSetGoal: 'stat:set-goal',
+  /** M9 · A1：可覆写提示词模板 */
+  promptList: 'prompt:list',
+  promptSave: 'prompt:save',
+  promptReset: 'prompt:reset',
+  /** M9 · A2：文风仿写画像 */
+  styleGet: 'style:get',
+  styleGenerate: 'style:generate',
+  styleClear: 'style:clear',
+  /** M9 · A3：向量检索 */
+  vectorStatus: 'vector:status',
+  vectorRebuild: 'vector:rebuild',
+  vectorQuery: 'vector:query',
+  vectorClear: 'vector:clear',
+  /** M9 · A4：自动更新 */
+  updateStatus: 'update:status',
+  updateCheck: 'update:check',
+  updateDownload: 'update:download',
+  updateInstall: 'update:install',
+  /** 主进程 → 渲染进程：更新状态推送 */
+  updateEvent: 'update:event',
+  /** M9 · A5：分卷与修订记录 */
+  volumeList: 'volume:list',
+  volumeSave: 'volume:save',
+  volumeRemove: 'volume:remove',
+  revisionList: 'revision:list'
 } as const
 
 export type IpcChannelName = (typeof IpcChannel)[keyof typeof IpcChannel]
@@ -272,7 +298,9 @@ export const libraryMigrateSchema = z.object({ targetPath: libraryPathSchema })
 export const librarySettingsSchema = z.object({
   trashRetentionDays: z.union([z.literal(0), z.literal(7), z.literal(30), z.literal(90)]).optional(),
   cleanCacheOnQuit: z.boolean().optional(),
-  autoBackup: z.boolean().optional()
+  autoBackup: z.boolean().optional(),
+  ragSearch: z.boolean().optional(),
+  autoUpdate: z.boolean().optional()
 })
 
 export const trashItemSchema = z.object({
@@ -310,6 +338,22 @@ export const importAnalyzeSchema = z
 
 export const importSessionSchema = z.object({ id: z.string().min(1).max(100) })
 
+export const importUpdateItemsSchema = z.object({
+  sessionId: z.string().min(1).max(100),
+  updates: z
+    .array(
+      z.object({
+        itemId: z.string().min(1).max(100),
+        action: importActionSchema.optional(),
+        enabled: z.boolean().optional(),
+        chapterNo: z.number().int().min(1).max(99_999).optional(),
+        volumeIdx: z.number().int().min(0).max(9_999).optional()
+      })
+    )
+    .min(1)
+    .max(5_000)
+})
+
 export const importUpdateItemSchema = z.object({
   sessionId: z.string().min(1).max(100),
   itemId: z.string().min(1).max(100),
@@ -342,6 +386,44 @@ export const bookAuditSchema = z.object({
 })
 
 export const auditAbortSchema = z.object({ taskId: z.string().min(1).max(100) })
+
+/* ============================ M9（A1–A5） ============================ */
+
+export const promptSaveSchema = z.object({
+  key: z.string().min(1).max(100),
+  system: z.string().max(200_000).optional(),
+  instruction: z.string().max(200_000).optional()
+})
+
+export const promptKeySchema = z.string().min(1).max(100)
+
+export const styleGenerateSchema = z
+  .object({
+    projectId: projectIdSchema,
+    sample: z.string().max(200_000).optional(),
+    useExisting: z.boolean().optional()
+  })
+  .refine((value) => Boolean(value.sample && value.sample.trim()) || value.useExisting === true, {
+    message: '请粘贴参考文本，或选择从本书已有正文抽取样本'
+  })
+
+export const vectorQuerySchema = z.object({
+  projectId: projectIdSchema,
+  text: z.string().trim().min(1).max(4_000),
+  limit: z.number().int().min(1).max(50).optional()
+})
+
+export const volumeSaveSchema = z.object({
+  id: idSchema.optional(),
+  projectId: projectIdSchema,
+  idx: z.number().int().min(0).max(9_999),
+  title: z.string().max(200).optional(),
+  synopsis: z.string().max(20_000).optional()
+})
+
+export const volumeRemoveSchema = idSchema
+
+export const revisionQuerySchema = chapterQuerySchema
 
 export const statSetGoalSchema = z
   .object({

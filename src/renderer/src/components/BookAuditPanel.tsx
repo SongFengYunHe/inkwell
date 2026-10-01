@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AuditCheck, BookAuditEstimate, BookAuditProgress, BookAuditSummary } from '@shared/types'
 
 const SEVERITY_LABEL: Record<AuditCheck['severity'], string> = { info: '提示', warn: '警告', error: '严重' }
@@ -27,8 +27,12 @@ export default function BookAuditPanel({ projectId, onClose }: { projectId: numb
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [fixing, setFixing] = useState(false)
 
+  /** 当前任务的 taskId（事件按它过滤，避免 StrictMode 双挂载 / 重复启动时张冠李戴） */
+  const taskIdRef = useRef<string | null>(null)
+
   useEffect(() => {
     return window.inkwell.audit.onEvent((event) => {
+      if (taskIdRef.current && event.taskId !== taskIdRef.current) return
       if (event.type === 'progress') {
         setProgress(event.progress)
         return
@@ -37,12 +41,14 @@ export default function BookAuditPanel({ projectId, onClose }: { projectId: numb
         setSummary(event.summary)
         setProgress(null)
         setRunning(false)
+        taskIdRef.current = null
         setTaskId(null)
         return
       }
       setError(event.message)
       setProgress(null)
       setRunning(false)
+      taskIdRef.current = null
       setTaskId(null)
     })
   }, [])
@@ -51,14 +57,23 @@ export default function BookAuditPanel({ projectId, onClose }: { projectId: numb
     async (withModel: boolean, confirm: boolean) => {
       setError(null)
       setEstimate(null)
-      const result = await window.inkwell.audit.book({ projectId, useModel: withModel, confirm })
-      if (result.needsConfirm) {
-        setEstimate(result.estimate)
-        return
+      try {
+        const result = await window.inkwell.audit.book({ projectId, useModel: withModel, confirm })
+        if (result.needsConfirm) {
+          setEstimate(result.estimate)
+          return
+        }
+        taskIdRef.current = result.taskId
+        setTaskId(result.taskId)
+        setRunning(true)
+        setProgress(null)
+      } catch (err) {
+        // 启动失败必须把按钮从「体检中…」复位，否则用户只能关面板重开
+        taskIdRef.current = null
+        setTaskId(null)
+        setRunning(false)
+        setError(err instanceof Error ? err.message : String(err))
       }
-      setTaskId(result.taskId)
-      setRunning(true)
-      setProgress(null)
     },
     [projectId]
   )
@@ -117,7 +132,9 @@ export default function BookAuditPanel({ projectId, onClose }: { projectId: numb
     } finally {
       setFixing(false)
       setSelected(new Set())
-      await startAudit(false, true)
+      // 沿用用户本次选择的审计口径重跑（模型审计已在上面确认过 token 预估），
+      // 否则「付费拿到的模型报告」会被一份确定性报告静默覆盖。
+      await startAudit(useModel, true)
     }
   }
 
@@ -258,7 +275,7 @@ export default function BookAuditPanel({ projectId, onClose }: { projectId: numb
                 disabled={fixing}
                 className="mt-4 w-full rounded-lg bg-stone-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-stone-700 disabled:opacity-40"
               >
-                {fixing ? '修复中…' : `一键修复选中 ${selected.size} 章`}
+                {fixing ? '修复中…' : `一键修复选中 ${selected.size} 章（确定性规则）`}
               </button>
             )}
           </aside>

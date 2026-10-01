@@ -16,6 +16,7 @@ import {
   importCommitSchema,
   importSessionSchema,
   importUpdateItemSchema,
+  importUpdateItemsSchema,
   importValidateSchema,
   libraryCreateSchema,
   libraryIdSchema,
@@ -30,12 +31,19 @@ import {
   projectCreateSchema,
   projectIdSchema,
   projectUpdateSchema,
+  promptKeySchema,
+  promptSaveSchema,
   providerSaveSchema,
   requestIdSchema,
+  revisionQuerySchema,
   roleRouteSaveSchema,
   searchQuerySchema,
   statSetGoalSchema,
+  styleGenerateSchema,
   trashItemSchema,
+  vectorQuerySchema,
+  volumeRemoveSchema,
+  volumeSaveSchema,
   wizardStartSchema
 } from '@shared/ipc'
 import { join } from 'node:path'
@@ -61,7 +69,8 @@ import {
   commitSession,
   getSession,
   revalidateSession,
-  updateImportItem
+  updateImportItem,
+  updateImportItems
 } from '../import/session'
 import { getLatestReview, saveReview } from '../db/memory-repo'
 import { createRun, latestRun, updateRun } from '../db/pipeline-repo'
@@ -116,6 +125,13 @@ import {
 import { registerAborter, registerCleanup, unregisterAborter } from '../lifecycle'
 import { search } from '../search/query'
 import { getStatSummary, setGoal } from '../stat/goal'
+/* M9（A1–A5） */
+import { listPromptTemplates, resetPromptTemplate, savePromptTemplate } from '../prompts/registry'
+import { clearStyleProfile, generateStyleProfile, getStyleProfile } from '../engine/style'
+import { clearIndex, indexStatus, rebuildIndex, searchVectors } from '../search/vector'
+import { checkForUpdates, downloadUpdate, getUpdateStatus, installUpdate } from '../update'
+import { listVolumes, removeVolume, saveVolume } from '../db/volume-repo'
+import { listRevisions } from '../db/revision-repo'
 
 /** 正在进行的可中断任务，key 为渲染进程生成的 requestId */
 const activeJobs = new Map<string, AbortController>()
@@ -443,9 +459,14 @@ export function registerIpcHandlers(): void {
     // 安装版：mcp.js 位于 app.asar 归档内，普通 Node 读不了 asar；
     // 改用应用自带的 Electron 运行时（ELECTRON_RUN_AS_NODE=1），等价于一个 Node 进程，
     // 且自带 asar 支持，无需用户另装 Node。
+    // 多书库之后数据库不一定在 userData：把当前活动库显式传给 MCP 进程，
+    // 否则外部 Agent 会连到（或新建）userData 下的另一个空库。
+    const dbPath = getDatabasePath()
+    const dbEnv: Record<string, string> = dbPath ? { INKWELL_DB: dbPath } : {}
+
     if (app.isPackaged) {
       const command = process.execPath
-      const env = { ELECTRON_RUN_AS_NODE: '1' }
+      const env = { ELECTRON_RUN_AS_NODE: '1', ...dbEnv }
       return {
         mode: 'electron',
         entry,
@@ -463,8 +484,8 @@ export function registerIpcHandlers(): void {
       entry,
       command,
       args: [entry],
-      env: {},
-      configJson: JSON.stringify({ mcpServers: { inkwell: { command, args: [entry] } } }, null, 2)
+      env: dbEnv,
+      configJson: JSON.stringify({ mcpServers: { inkwell: { command, args: [entry], env: dbEnv } } }, null, 2)
     }
   })
 
@@ -586,6 +607,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.importUpdateItem, (_event, raw: unknown) =>
     updateImportItem(importUpdateItemSchema.parse(raw))
   )
+  ipcMain.handle(IpcChannel.importUpdateItems, (_event, raw: unknown) =>
+    updateImportItems(importUpdateItemsSchema.parse(raw))
+  )
   ipcMain.handle(IpcChannel.importValidate, (_event, raw: unknown) =>
     revalidateSession(importValidateSchema.parse(raw))
   )
@@ -649,5 +673,78 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle(IpcChannel.auditAbort, (_event, raw: unknown) => {
     activeAuditTasks.get(auditAbortSchema.parse(raw).taskId)?.abort()
+  })
+
+  /* ========================= M9 · A1：可覆写提示词模板 ========================= */
+
+  ipcMain.handle(IpcChannel.promptList, () => listPromptTemplates())
+  ipcMain.handle(IpcChannel.promptSave, (_event, raw: unknown) =>
+    savePromptTemplate(promptSaveSchema.parse(raw))
+  )
+  ipcMain.handle(IpcChannel.promptReset, (_event, key: unknown) =>
+    resetPromptTemplate(promptKeySchema.parse(key))
+  )
+
+  /* ============================ M9 · A2：文风画像 ============================ */
+
+  ipcMain.handle(IpcChannel.styleGet, (_event, projectId: unknown) =>
+    getStyleProfile(projectIdSchema.parse(projectId))
+  )
+  ipcMain.handle(IpcChannel.styleGenerate, async (_event, raw: unknown) => {
+    const input = styleGenerateSchema.parse(raw)
+    const controller = new AbortController()
+    registerAborter(controller)
+    try {
+      return await generateStyleProfile({ ...input, signal: controller.signal })
+    } finally {
+      unregisterAborter(controller)
+    }
+  })
+  ipcMain.handle(IpcChannel.styleClear, (_event, projectId: unknown) => {
+    clearStyleProfile(projectIdSchema.parse(projectId))
+  })
+
+  /* ========================= M9 · A3：向量检索（RAG） ========================= */
+
+  ipcMain.handle(IpcChannel.vectorStatus, (_event, projectId: unknown) =>
+    indexStatus(projectIdSchema.parse(projectId))
+  )
+  ipcMain.handle(IpcChannel.vectorRebuild, async (_event, projectId: unknown) => {
+    const id = projectIdSchema.parse(projectId)
+    const controller = new AbortController()
+    registerAborter(controller)
+    try {
+      return await rebuildIndex(id, controller.signal)
+    } finally {
+      unregisterAborter(controller)
+    }
+  })
+  ipcMain.handle(IpcChannel.vectorQuery, async (_event, raw: unknown) => {
+    const input = vectorQuerySchema.parse(raw)
+    return searchVectors(input.projectId, input.text, { limit: input.limit })
+  })
+  ipcMain.handle(IpcChannel.vectorClear, (_event, projectId: unknown) => {
+    clearIndex(projectIdSchema.parse(projectId))
+  })
+
+  /* ============================ M9 · A4：自动更新 ============================ */
+
+  ipcMain.handle(IpcChannel.updateStatus, () => getUpdateStatus())
+  ipcMain.handle(IpcChannel.updateCheck, () => checkForUpdates())
+  ipcMain.handle(IpcChannel.updateDownload, () => downloadUpdate())
+  ipcMain.handle(IpcChannel.updateInstall, () => {
+    installUpdate()
+  })
+
+  /* ====================== M9 · A5：分卷与修订记录 ====================== */
+
+  ipcMain.handle(IpcChannel.volumeList, (_event, projectId: unknown) =>
+    listVolumes(projectIdSchema.parse(projectId))
+  )
+  ipcMain.handle(IpcChannel.volumeSave, (_event, raw: unknown) => saveVolume(volumeSaveSchema.parse(raw)))
+  ipcMain.handle(IpcChannel.volumeRemove, (_event, id: unknown) => removeVolume(volumeRemoveSchema.parse(id)))
+  ipcMain.handle(IpcChannel.revisionList, (_event, raw: unknown) => {
+    const input = revisionQuerySchema.parse(raw)
+    return listRevisions(input.projectId, input.chapterNo)
   })
 }

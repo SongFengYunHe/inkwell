@@ -92,6 +92,26 @@
 - **写作目标与进度**：书架显示「今日 N / 目标」进度环与连续达标天数（streak）；字数在草稿保存时按**差值**记账（改写可正可负），目标在设置页可调
 - **隐私与后台行为声明**：代码层保证不自启、不驻留、无遥测，并在 README 与设置页「关于」同时列出
 
+**M9 · A1–A5 补齐 + 缺陷清理 —— 已完成**
+
+- **A1 可覆写提示词模板**：12 条关键提示词（正文起草 / 续写 / 重写 / 润色 / 大纲 / 细纲 / 审计 / 定点修复 / 记忆 / 导入兜底 / 文风画像）落成模板，设置页「提示词」可逐条覆写系统提示词与指令块，支持 `{{变量}}`；数据库只存「被改过的行」，内置模板升级后自动跟随，一键恢复默认
+- **A2 文风仿写画像**：粘贴一段参考文本（或直接取本书已有正文）→ 提炼出总体 / 语气 / 视角 / 句式 / 用词 / 对话 / 意象 / 节奏 / 标志性用词 / 必须避免 的结构化画像，落库为 `project.style_profile`，并以「【文风画像（必须遵守）】」注入每一章的写作提示词
+- **A3 RAG 向量检索**：新增 OpenAI 兼容 `/embeddings` 调用（embedder 角色路由 + 用量记账）、正文分块与向量索引（`embedding` 表，Float32Array BLOB）、余弦检索与「相关回忆」召回；**默认关闭**，开关在设置页「向量检索」，支持重建索引 / 试检索 / 清空；没有 embedder、没开开关、端点不支持时一律静默降级，绝不影响写作
+- **A4 自动更新**：接入 `electron-updater`，打包生成 `latest.yml` / `app-update.yml`，设置页「关于」可检查更新 / 下载 / 重启安装；**只自动检查并提示，不自动下载安装**；另加 `release` 工作流：打 `v*` tag 即构建并发布到 GitHub Releases
+- **A5 补齐计划书 §5.1 的两张表**：`volume`（卷名 / 卷梗概，细纲写入时自动建卷，派生章节区间）与 `draft_revision`（修订记录：一键修复 / 润色 / 重写「为什么改、依据什么、字数多少」），正文面板可展开「修订历史」
+- **本轮修掉的数据安全问题**（完整清单见 `docs/第三阶段计划书.md` §3）：
+  - 回收站彻底删除会连带删掉「复用同章节号后新写的活正文」—— 已改为只删与细纲同批软删除的草稿，并包进事务；
+  - 整本移入回收站后仍能被全文检索命中 —— FTS 与 LIKE 两条检索路径都加了「项目未删除」约束；
+  - 书库引导：全新安装只登记条目却不建库，启动即报「找不到书库文件」并留下僵尸书库 —— 改为「建好并打开」；`pendingMigration` / 旧数据卡片按当前状态实时重算，迁移向导不再反复弹出；
+  - 迁移回滚不回滚指针：切指针后若打开失败，会留下「配置指向一个已被自己删掉的目标」—— 改为先恢复指针、再删半成品、最后重开源库；
+  - 备份恢复改为「校验 → 写 .tmp → 校验 → 原子 rename」，失败自动用恢复前的保护备份还原；
+  - 启动时若书库引导抛错仍然开窗（用户可在「书库」页自救），不再白屏；
+  - 迁移前自动备份改名并纳入备份列表与轮转（此前是看不见、删不掉、只增不减的孤儿文件）；
+  - 拒绝用旧版程序打开新版 schema 的库（避免静默按旧结构读写）；
+  - 界面：Electron 不支持 `window.prompt`，「重命名书库」点了没反应 —— 改为应用内弹窗；「移除书库」默认只从列表移除，删磁盘数据必须是独立勾选项；
+  - 专注模式不再切换到另一棵 React 树（此前会把未保存的正文丢掉），并补上专注模式下的「保存修改」；
+  - 删除失败不再弹「已移入回收站」；全书体检「一键修复选中章」不再把已付费的模型审计结果覆盖成确定性报告；导入「全选 / 只选新建」改为一次批量 IPC；拖拽落点坐标加兜底；渲染层调用全部有错误反馈。
+
 > 说明：安装后目录约 336MB，其中 Electron 44 运行时（exe + 共享库 + 语言包）约占 320MB，属框架基线；应用自身的代码与依赖只占约 10MB。长期降体积的路径是迁移 Tauri（见计划书 §9.3）。
 
 ## 技术栈
@@ -121,6 +141,8 @@ npm run smoke:m5     # 构建并跑一次 M5 自检（导入 Vela 工程 → 继
 npm run smoke:m6     # 构建并跑一次 M6 自检（多书库隔离 / 迁移含中断回滚 / 软删除回收站 / 备份轮转 / 退出无 WAL 残留）
 npm run smoke:m7     # 构建并跑一次 M7 自检（编码探测 / docx+epub 读回 / 大纲分层 / 字段抽取 / 差异预览与落库）
 npm run smoke:m8     # 构建并跑一次 M8 自检（FTS5 trigram 实测 / 中英文检索 / 整本审计聚合 / 字数统计）
+npm run smoke:m9     # 构建并跑一次 M9 自检（提示词覆写 / 文风画像 / 向量索引与召回 / 更新状态 / 分卷与修订 / 两个数据安全回归）
+npm run clean:release # 清空唯一打包目录 release/（被占用时明确指出是哪个文件，且不删除任何东西）
 npm run dist:win     # 打包 Windows 安装包到 release/（NSIS）
 ```
 
@@ -210,8 +232,14 @@ npx electron . --smoke-m8
 
 ### 打包（Windows）
 
+产物的唯一目录是 `release/`（已在 `.gitignore` 中忽略）：`pack:dir` 出 `release/win-unpacked`，`dist:win` 再额外产出安装包与 `latest.yml`。两条脚本都会先跑 `clean:release`，因此**目录里只会留最新一份产物**（此前 `release/` 与 `release_build/` 分裂过，共占约 894MB）。
+
+> **不要就地运行 `release/win-unpacked/Inkwell.exe`**：Windows 上被占用的文件会让下次打包在删除旧目录时 EBUSY，electron-builder 会把 `win-unpacked` 掏空并留下 300MB+ 的 `win-unpacked.tmp`（历史上真实发生过两次）。要跑解包版自检，请先把整个 `win-unpacked` 复制到 `%TEMP%` 再运行。
+> `clean:release` 采用「先原子改名、再删除」：目录被占用时它会在**不删任何文件**的前提下失败，并列出是哪个文件被占用。
+
 ```powershell
-npm run dist:win        # 产物落在 release/（已在 .gitignore 中忽略）
+npm run clean:release   # 单独清空 release/
+npm run dist:win        # 先清空 release/，再打包（NSIS 安装包 + win-unpacked + latest.yml）
 npm run pack:dir        # 只出解包目录，便于快速验证
 
 # 国内网络若拉取 electron-builder 依赖较慢，可先设置镜像：
@@ -256,6 +284,10 @@ $env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-bu
 12. **检索与体检**：`Ctrl+K` 全局搜索细纲 / 正文 / 记忆；工作区顶栏「全书体检」聚合全书问题并可批量修复
 13. **数据与备份**：设置页「数据与备份」可立即备份 / 恢复 / 打开备份目录；「回收站」可找回误删；书架顶部有今日字数进度环与连续达标天数
 14. **换书库 / 迁移**：书架右上「书库」可新建、挂载、切换书库；也可把现有书库迁移到别的磁盘（可中断可回滚）
+15. **改提示词**：设置页「提示词」可逐条覆写 12 个关键提示词模板，`{{变量}}` 由程序在调用时替换，改坏了点「恢复默认」即可
+16. **文风仿写**：工作区「设定与大纲」底部粘贴一段参考文本 → 生成文风画像，此后每章都按这份画像写
+17. **向量检索**：设置页「向量检索」开启后用 embedder 端点建立索引，写作时按细纲召回相关回忆（默认关闭，会消耗 embedding 额度）
+18. **检查更新**：设置页「关于」可检查 / 下载 / 重启安装；只在你点按钮时才下载，不自动安装
 
 #### 用外部 Agent 零成本跑完整本
 
@@ -316,9 +348,11 @@ src/
 │  ├─ smoke-m8.ts        # --smoke-m8 检索 / 整本审计 / 写作统计自检
 │  ├─ smoke/fixtures/    # 分层解析用的 3 份大纲样本
 │  ├─ db/                # schema / migrations / client / repositories / memory / pipeline / trash / backup
+│  │                     #   + volume-repo（A5 分卷）/ revision-repo（A5 修订记录）
 │  ├─ library/           # 多书库：config / registry / precheck / migrate
 │  ├─ engine/            # 确定性引擎：truth / audit / audit-book / memory / rules / fix / pipeline / run
 │  ├─ search/            # FTS5 全文检索（fts / query，含中文短词 LIKE 回退）
+│  │                     #   + vector（A3 分块 / 索引 / 余弦检索）+ recall（写作时召回相关回忆）
 │  ├─ stat/              # 写作统计与目标（tracker / goal）
 │  ├─ export/            # 导出引擎：TXT / MD / DOCX / EPUB + 内置 ZIP 写入器
 │  ├─ import/            # 导入引擎：zip-reader / encoding / docx / epub / text + outline 分层解析 + session
@@ -326,7 +360,8 @@ src/
 │  ├─ llm/               # invoke(路由+记账) / route / usage / context / generate / wizard / brief
 │  ├─ mcp/               # MCP Server（stdio）入口与工具实现
 │  ├─ bridge/            # 任务单桥（导出 task.md）
-│  ├─ prompts/           # 内置提示词模板
+│  ├─ prompts/           # 内置提示词模板（zh-CN）+ registry（A1 可覆写模板注册表与变量替换）
+│  ├─ update.ts          # A4 自动更新（electron-updater 封装与状态广播）
 │  ├─ security/          # safeStorage 密钥加密
 │  └─ ipc/               # IPC handlers（zod 校验）
 ├─ preload/              # contextBridge 白名单 API
@@ -336,6 +371,7 @@ src/
 │  │                     #   + 书库：MigrationWizard / TrashPanel / BackupPanel
 │  │                     #   + 导入：DropZone / OutlineTree / FieldDiff / ValidationReport
 │  │                     #   + M8：SearchPalette / BookAuditPanel / GoalWidget
+│  │                     #   + M9：PromptPanel / VectorPanel / UpdatePanel / StylePanel / VolumePanel
 │  ├─ data/              # 题材模板（30 种）
 │  └─ stores/            # zustand
 └─ shared/               # 跨进程共享的类型与 IPC 契约

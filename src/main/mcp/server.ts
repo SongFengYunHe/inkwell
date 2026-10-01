@@ -14,6 +14,8 @@ import { deterministicAudit } from '../engine/audit'
 import { commitMemory } from '../engine/memory'
 import { buildChapterContext } from '../llm/context'
 import { buildBriefExpandMessages, buildMessagesFor } from '../prompts/zh-CN'
+import { augmentContext } from '../search/recall'
+import { indexChapterDraft } from '../search/vector'
 
 interface TextBlock {
   type: 'text'
@@ -161,7 +163,7 @@ export function createInkwellMcpServer(): McpServer {
           null,
           2
         ),
-        renderMessages(buildMessagesFor('draft', bundle.context))
+        renderMessages(buildMessagesFor('draft', await augmentContext(bundle)))
       )
     }
   )
@@ -188,7 +190,10 @@ export function createInkwellMcpServer(): McpServer {
         hasDraft: Boolean(bundle.latestDraft?.content.trim()),
         targetWords: bundle.project.wordsPerChapter
       }
-      return text(JSON.stringify(summary, null, 2), renderMessages(buildMessagesFor('draft', bundle.context)))
+      return text(
+        JSON.stringify(summary, null, 2),
+        renderMessages(buildMessagesFor('draft', await augmentContext(bundle)))
+      )
     }
   )
 
@@ -256,6 +261,8 @@ export function createInkwellMcpServer(): McpServer {
         source: 'write',
         content
       })
+      // A3：Agent 落盘后同样增量索引，后续章节才能召回（不可用时静默跳过）
+      await indexChapterDraft(projectId, chapterNo, saved.id, saved.content)
 
       // 记忆回写是增强项：没有可用的 extractor 端点时静默跳过，不影响落盘
       let memoryCommitted = false

@@ -12,6 +12,11 @@ function formatBytes(bytes: number | null): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
+/** 去掉末尾分隔符并统一小写，用于路径比较（Windows 不区分大小写） */
+function normalizePath(path: string): string {
+  return path.replace(/[\\/]+$/, '').toLowerCase()
+}
+
 export default function LibraryManager() {
   const setView = useAppStore((s) => s.setView)
   const loadBootstrap = useAppStore((s) => s.loadBootstrap)
@@ -24,6 +29,12 @@ export default function LibraryManager() {
   const [precheck, setPrecheck] = useState<LibraryPrecheck | null>(null)
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  /** 重命名对话框（Electron 不支持 window.prompt，必须自绘） */
+  const [renaming, setRenaming] = useState<LibraryInfo | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  /** 移除书库对话框：默认只从列表移除，删文件必须是用户明确勾选的第二个决定 */
+  const [removing, setRemoving] = useState<LibraryInfo | null>(null)
+  const [deleteFilesToo, setDeleteFilesToo] = useState(false)
 
   useEffect(() => {
     void loadBootstrap()
@@ -35,21 +46,47 @@ export default function LibraryManager() {
   }, [loadBootstrap, loadProjects])
 
   const activeLibrary = bootstrap?.libraries.find((item) => item.id === bootstrap.activeLibraryId) ?? null
-  const legacyIsActive =
-    Boolean(bootstrap?.legacyDbPath && activeLibrary && bootstrap.legacyDbPath.startsWith(activeLibrary.path))
+  // 旧库是否仍是当前书库：按「旧库所在目录」比较，避免前缀误判（inkwell vs inkwell2）
+  const legacyRoot = bootstrap?.legacyDbPath
+    ? bootstrap.legacyDbPath.replace(/[\\/][^\\/]*$/, '')
+    : ''
+  const legacyIsActive = Boolean(
+    legacyRoot && activeLibrary && normalizePath(legacyRoot) === normalizePath(activeLibrary.path)
+  )
 
-  const pickFolder = async (): Promise<void> => {
-    const picked = await window.inkwell.app.pickFolder()
-    if (!picked) return
-    setPath(picked)
-    setPrecheck(await window.inkwell.library.precheck(picked))
-  }
-
-  const doCreate = async (): Promise<void> => {
-    if (!name.trim() || !path.trim()) return
+  /**
+   * 统一的异步动作包装：集中处理 busy 与错误提示。
+   * 任何一步失败都会写进 message（而不是静默 reject 导致「按钮点了没反应」）。
+   */
+  const run = useCallback(async (task: () => Promise<void>): Promise<void> => {
     setBusy(true)
     setMessage('')
     try {
+      await task()
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
+  const pickFolder = (): void => {
+    void run(async () => {
+      const picked = await window.inkwell.app.pickFolder()
+      if (!picked) return
+      setPath(picked)
+      try {
+        setPrecheck(await window.inkwell.library.precheck(picked))
+      } catch (err) {
+        setPrecheck(null)
+        setMessage(err instanceof Error ? err.message : String(err))
+      }
+    })
+  }
+
+  const doCreate = (): void => {
+    if (!name.trim() || !path.trim()) return
+    void run(async () => {
       const target = await window.inkwell.library.precheck(path)
       if (target.blockingError) {
         setMessage(target.blockingError)
@@ -61,89 +98,83 @@ export default function LibraryManager() {
       setPath('')
       setPrecheck(null)
       await refresh()
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
+    })
   }
 
-  const doAdd = async (): Promise<void> => {
+  const doAdd = (): void => {
     if (!path.trim()) return
-    setBusy(true)
-    setMessage('')
-    try {
+    void run(async () => {
       await window.inkwell.library.add({ name: name.trim() || '挂载的书库', path: path.trim() })
       setName('')
       setPath('')
       setPrecheck(null)
       await refresh()
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
+    })
   }
 
-  const doSwitch = async (item: LibraryInfo): Promise<void> => {
-    setBusy(true)
-    setMessage('')
-    try {
+  const doSwitch = (item: LibraryInfo): void => {
+    void run(async () => {
       await window.inkwell.library.switch(item.id)
       await refresh()
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
+    })
   }
 
-  const doRename = async (item: LibraryInfo): Promise<void> => {
-    const next = window.prompt('新的书库名称', item.name)
-    if (!next?.trim()) return
-    await window.inkwell.library.rename({ id: item.id, name: next.trim() })
-    await refresh()
-  }
-
-  const doLocate = async (item: LibraryInfo): Promise<void> => {
-    const picked = await window.inkwell.app.pickFolder()
-    if (!picked) return
+  const openRename = (item: LibraryInfo): void => {
     setMessage('')
-    try {
+    setRenameValue(item.name)
+    setRenaming(item)
+  }
+
+  const submitRename = (): void => {
+    const target = renaming
+    const next = renameValue.trim()
+    if (!target || !next) return
+    void run(async () => {
+      await window.inkwell.library.rename({ id: target.id, name: next })
+      setRenaming(null)
+      await refresh()
+    })
+  }
+
+  const doLocate = (item: LibraryInfo): void => {
+    void run(async () => {
+      const picked = await window.inkwell.app.pickFolder()
+      if (!picked) return
       await window.inkwell.library.locate({ id: item.id, path: picked })
       await refresh()
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
-    }
+    })
   }
 
-  const doRemove = async (item: LibraryInfo): Promise<void> => {
-    const deleteFiles = window.confirm(
-      `从列表移除「${item.name}」？\n\n「确定」= 连同磁盘文件一起删除（不可恢复）\n「取消」= 仅从列表移除，文件保留`
-    )
-    setBusy(true)
-    try {
-      await window.inkwell.library.remove({ id: item.id, deleteFiles })
+  const openRemove = (item: LibraryInfo): void => {
+    setMessage('')
+    setDeleteFilesToo(false)
+    setRemoving(item)
+  }
+
+  const submitRemove = (): void => {
+    const target = removing
+    if (!target) return
+    void run(async () => {
+      await window.inkwell.library.remove({ id: target.id, deleteFiles: deleteFilesToo })
+      setRemoving(null)
+      setDeleteFilesToo(false)
       await refresh()
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
+    })
   }
 
-  const purgeLegacy = async (): Promise<void> => {
-    if (!window.confirm('将永久删除原 userData 目录中的旧数据库文件。确认迁移后的书库一切正常后再操作。确定继续？')) return
-    setBusy(true)
-    try {
+  const purgeLegacy = (): void => {
+    void run(async () => {
+      if (
+        !window.confirm(
+          '将永久删除原 userData 目录中的旧数据库文件。确认迁移后的书库一切正常后再操作。确定继续？'
+        )
+      ) {
+        return
+      }
       const result = await window.inkwell.library.purgeLegacy()
       setMessage(`已清理旧数据，释放 ${formatBytes(result.freedBytes)}`)
       await refresh()
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
+    })
   }
 
   return (
@@ -217,22 +248,28 @@ export default function LibraryManager() {
                       <p className="truncate text-[11px] text-stone-400">{item.path}</p>
                     </div>
                     {!active && item.available && (
-                      <button type="button" onClick={() => void doSwitch(item)} disabled={busy} className={BUTTON_GHOST}>
+                      <button type="button" onClick={() => doSwitch(item)} disabled={busy} className={BUTTON_GHOST}>
                         切换
                       </button>
                     )}
                     {!item.available && (
-                      <button type="button" onClick={() => void doLocate(item)} className={BUTTON_GHOST}>
+                      <button type="button" onClick={() => doLocate(item)} disabled={busy} className={BUTTON_GHOST}>
                         重新定位
                       </button>
                     )}
-                    <button type="button" onClick={() => void doRename(item)} className="text-xs text-stone-400 hover:text-stone-700">
+                    <button
+                      type="button"
+                      onClick={() => openRename(item)}
+                      disabled={busy}
+                      className="text-xs text-stone-400 hover:text-stone-700 disabled:opacity-40"
+                    >
                       重命名
                     </button>
                     <button
                       type="button"
-                      onClick={() => void doRemove(item)}
-                      className="text-xs text-stone-400 transition hover:text-red-600"
+                      onClick={() => openRemove(item)}
+                      disabled={busy}
+                      className="text-xs text-stone-400 transition hover:text-red-600 disabled:opacity-40"
                     >
                       移除
                     </button>
@@ -258,7 +295,7 @@ export default function LibraryManager() {
                   placeholder="目标目录，如 D:\Inkwell书库"
                   className={INPUT_CLASS}
                 />
-                <button type="button" onClick={() => void pickFolder()} className={BUTTON_GHOST}>
+                <button type="button" onClick={pickFolder} disabled={busy} className={BUTTON_GHOST}>
                   浏览…
                 </button>
               </div>
@@ -274,13 +311,13 @@ export default function LibraryManager() {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => void doCreate()}
+                  onClick={doCreate}
                   disabled={busy || !name.trim() || !path.trim()}
                   className={BUTTON_PRIMARY}
                 >
                   新建空书库
                 </button>
-                <button type="button" onClick={() => void doAdd()} disabled={busy || !path.trim()} className={BUTTON_GHOST}>
+                <button type="button" onClick={doAdd} disabled={busy || !path.trim()} className={BUTTON_GHOST}>
                   挂载已有书库
                 </button>
               </div>
@@ -307,7 +344,7 @@ export default function LibraryManager() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => void purgeLegacy()}
+                  onClick={purgeLegacy}
                   disabled={busy || legacyIsActive}
                   title={legacyIsActive ? '当前书库仍指向旧位置，无法清理' : undefined}
                   className="text-xs text-stone-400 transition hover:text-red-600 disabled:opacity-40"
@@ -319,6 +356,79 @@ export default function LibraryManager() {
           )}
         </div>
       </div>
+
+      {removing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-6">
+          <div className="flex w-full max-w-md flex-col gap-4 rounded-2xl bg-white p-5 shadow-xl">
+            <div>
+              <h2 className="text-sm font-medium text-stone-800">移除书库「{removing.name}」</h2>
+              <p className="mt-1 break-all text-[11px] text-stone-400">{removing.path}</p>
+            </div>
+            <p className="rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-600">
+              默认只从列表移除，磁盘上的数据库 / 备份 / 导出全部保留，随时可以「挂载已有书库」找回来。
+            </p>
+            <label className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              <input
+                type="checkbox"
+                checked={deleteFilesToo}
+                onChange={(e) => setDeleteFilesToo(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                同时删除磁盘上的全部数据（含数据库、备份、导出、封面）
+                <br />
+                <span className="text-red-500">此操作不可恢复，也不进回收站。</span>
+              </span>
+            </label>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setRemoving(null)} className={BUTTON_GHOST}>
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={submitRemove}
+                disabled={busy}
+                className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                  deleteFilesToo ? 'bg-red-600 hover:bg-red-500' : 'bg-stone-900 hover:bg-stone-700'
+                }`}
+              >
+                {deleteFilesToo ? '删除数据并移除' : '仅从列表移除'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {renaming && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-6">
+          <div className="flex w-full max-w-sm flex-col gap-4 rounded-2xl bg-white p-5 shadow-xl">
+            <h2 className="text-sm font-medium text-stone-800">重命名书库</h2>
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submitRename()
+                if (e.key === 'Escape') setRenaming(null)
+              }}
+              className={INPUT_CLASS}
+            />
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setRenaming(null)} className={BUTTON_GHOST}>
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={submitRename}
+                disabled={busy || !renameValue.trim()}
+                className={BUTTON_PRIMARY}
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

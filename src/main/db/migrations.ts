@@ -393,5 +393,84 @@ export const migrations: Migration[] = [
       `INSERT INTO writing_goal (id, daily_words, daily_chapters, created_at)
         VALUES (1, 3000, 1, CAST(strftime('%s', 'now') AS INTEGER) * 1000)`
     ]
+  },
+  {
+    version: 8,
+    name: 'prompt_templates_style_vector_volume_revisions',
+    // M9（A1–A5）：
+    //   A1 可覆写提示词模板表 prompt_template（只存"被覆写过"的行，缺行即用内置默认）
+    //   A2 文风画像 project.style_profile（JSON）
+    //   A3 RAG 向量索引 embedding（Float32Array BLOB）
+    //   A5 补齐计划书 §5.1 的 volume / draft_revision 两张表
+    statements: [
+      // ---------- A1：提示词模板（覆写层） ----------
+      `CREATE TABLE prompt_template (
+        key TEXT NOT NULL,
+        locale TEXT NOT NULL DEFAULT 'zh-CN',
+        system_body TEXT NOT NULL DEFAULT '',
+        instruction_body TEXT NOT NULL DEFAULT '',
+        version INTEGER NOT NULL DEFAULT 1,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (key, locale)
+      )`,
+
+      // ---------- A2：文风画像（项目级 JSON） ----------
+      `ALTER TABLE project ADD COLUMN style_profile TEXT NOT NULL DEFAULT ''`,
+
+      // ---------- A5：分卷（计划书 §5.1 volume） ----------
+      `CREATE TABLE volume (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+        idx INTEGER NOT NULL DEFAULT 1,
+        title TEXT NOT NULL DEFAULT '',
+        synopsis TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+      `CREATE UNIQUE INDEX volume_project_idx_uq ON volume (project_id, idx)`,
+
+      // ---------- A5：修订记录（计划书 §5.1 draft_revision） ----------
+      // 与 chapter_draft 的分工：draft 是"正文版本"，revision 是"这次改动的来由与产出"
+      `CREATE TABLE draft_revision (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+        chapter_no INTEGER NOT NULL,
+        base_draft_id INTEGER,
+        draft_id INTEGER,
+        idx INTEGER NOT NULL DEFAULT 1,
+        type TEXT NOT NULL DEFAULT 'refine',
+        status TEXT NOT NULL DEFAULT 'applied',
+        user_prompt TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        word_count INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      )`,
+      `CREATE INDEX draft_revision_project_chapter_idx ON draft_revision (project_id, chapter_no)`,
+
+      // ---------- A3：向量索引 ----------
+      // vector 为 Float32Array 的 BLOB；维度写在 dim 里，读回时按 dim 还原
+      `CREATE TABLE embedding (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+        source_type TEXT NOT NULL DEFAULT 'draft',
+        source_id INTEGER NOT NULL DEFAULT 0,
+        chapter_no INTEGER NOT NULL DEFAULT 0,
+        chunk_idx INTEGER NOT NULL DEFAULT 0,
+        text TEXT NOT NULL DEFAULT '',
+        dim INTEGER NOT NULL DEFAULT 0,
+        vector BLOB,
+        model TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL
+      )`,
+      `CREATE UNIQUE INDEX embedding_source_uq ON embedding (project_id, source_type, source_id, chunk_idx)`,
+      `CREATE INDEX embedding_project_chapter_idx ON embedding (project_id, chapter_no)`,
+
+      // ---------- 回填：把已有细纲里出现过的卷号补成 volume 行 ----------
+      `INSERT INTO volume (project_id, idx, title, synopsis, created_at, updated_at)
+        SELECT DISTINCT project_id, volume_idx, '', '',
+          CAST(strftime('%s', 'now') AS INTEGER) * 1000,
+          CAST(strftime('%s', 'now') AS INTEGER) * 1000
+        FROM chapter_brief WHERE deleted_at IS NULL`
+    ]
   }
 ]

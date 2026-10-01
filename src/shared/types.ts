@@ -660,6 +660,10 @@ export interface LibrarySettings {
   cleanCacheOnQuit: boolean
   /** 自动备份开关 */
   autoBackup: boolean
+  /** A3：写作时用向量检索召回相关回忆（默认关闭：会消耗 embedding 额度） */
+  ragSearch: boolean
+  /** A4：启动后自动检查更新（默认开启，只检查不自动安装） */
+  autoUpdate: boolean
 }
 
 /* ============================ M7：内容导入与解析 ============================ */
@@ -816,6 +820,17 @@ export interface ImportAnalyzeInput {
   useLlm?: boolean
 }
 
+export interface ImportUpdateItemsInput {
+  sessionId: string
+  updates: Array<{
+    itemId: string
+    action?: ImportAction
+    enabled?: boolean
+    chapterNo?: number
+    volumeIdx?: number
+  }>
+}
+
 export interface ImportUpdateItemInput {
   sessionId: string
   itemId: string
@@ -963,6 +978,145 @@ export interface StatSummary {
 export interface StatSetGoalInput {
   dailyWords?: number
   dailyChapters?: number
+}
+
+/* ==================== M9（A1–A5）：提示词 / 文风 / 向量 / 更新 / 分卷 / 修订 ==================== */
+
+/** A1 可覆写提示词模板 */
+export interface PromptTemplateInfo {
+  key: string
+  title: string
+  category: string
+  description: string
+  /** 该模板支持的 {{变量}} */
+  variables: string[]
+  /** 当前生效的系统提示词（可能是覆写值） */
+  system: string
+  /** 当前生效的指令块（可能是覆写值） */
+  instruction: string
+  /** 内置默认值，供「恢复默认」预览 */
+  defaultSystem: string
+  defaultInstruction: string
+  /** 是否被用户覆写过 */
+  overridden: boolean
+  updatedAt: number | null
+}
+
+export interface PromptTemplateSaveInput {
+  key: string
+  system?: string
+  instruction?: string
+}
+
+/** A2 文风仿写画像（JSON 落 project.style_profile） */
+export interface StyleProfile {
+  summary: string
+  tone: string
+  pov: string
+  sentence: string
+  diction: string
+  dialogue: string
+  imagery: string
+  pacing: string
+  taboos: string[]
+  keywords: string[]
+  samples: string[]
+  /** 画像来源说明（样本来源 / 生成时间） */
+  source: string
+  updatedAt: number
+}
+
+export interface StyleProfileGenerateInput {
+  projectId: number
+  /** 直接粘贴的参考文本；与 useExisting 二选一 */
+  sample?: string
+  /** 从本书已有正文里自动摘取样本 */
+  useExisting?: boolean
+}
+
+/** A3 向量索引状态 */
+export interface VectorIndexStatus {
+  /** 是否配置了 embedder 角色可用的端点 */
+  embedderAvailable: boolean
+  /** 是否开启了写作时的向量检索 */
+  enabled: boolean
+  chapters: number
+  chunks: number
+  dim: number
+  model: string
+  updatedAt: number | null
+}
+
+export interface VectorIndexResult {
+  chapters: number
+  chunks: number
+  /** 跳过的章节（无正文） */
+  skipped: number
+}
+
+export interface VectorRecallHit {
+  chapterNo: number
+  chunkIdx: number
+  score: number
+  text: string
+}
+
+/** A4 自动更新 */
+export type UpdatePhase = 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error' | 'unsupported'
+
+export interface UpdateStatus {
+  phase: UpdatePhase
+  /** 当前应用版本 */
+  currentVersion: string
+  /** 可用版本（phase=available/downloaded 时有值） */
+  version: string | null
+  releaseNotes: string
+  /** 下载进度 0-100 */
+  percent: number
+  bytesPerSecond: number
+  message: string
+  /** 打包版才支持自动更新（开发模式为 false） */
+  supported: boolean
+}
+
+/** A5 分卷（计划书 §5.1 volume） */
+export interface Volume {
+  id: number
+  projectId: number
+  idx: number
+  title: string
+  synopsis: string
+  /** 该卷下的章节号区间（派生，不落库） */
+  fromChapter: number
+  toChapter: number
+  chapterCount: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface VolumeSaveInput {
+  id?: number
+  projectId: number
+  idx: number
+  title?: string
+  synopsis?: string
+}
+
+/** A5 修订记录（计划书 §5.1 draft_revision） */
+export interface DraftRevision {
+  id: number
+  projectId: number
+  chapterNo: number
+  baseDraftId: number | null
+  draftId: number | null
+  idx: number
+  /** refine | review-fix | polish | rewrite | manual | import */
+  type: string
+  status: string
+  /** 改动来由（如命中的审计维度清单） */
+  userPrompt: string
+  wordCount: number
+  createdAt: number
 }
 
 /** 预加载脚本向渲染进程暴露的 API 契约 */
@@ -1131,6 +1285,8 @@ export interface InkwellApi {
     session(id: string): Promise<ImportSession | null>
     /** 改单条 action / enabled */
     updateItem(input: ImportUpdateItemInput): Promise<ImportSession>
+    /** 批量改多条（全选 / 只选新建等）：一次 IPC 往返，避免逐条往返把界面按死 */
+    updateItems(input: ImportUpdateItemsInput): Promise<ImportSession>
     /** 重跑体检（可自定义必填字段） */
     validate(input: ImportValidateInput): Promise<ImportSession>
     /** 仅落库 enabled 的条目；返回实际写入章数 */
@@ -1152,6 +1308,45 @@ export interface InkwellApi {
   stat: {
     summary(): Promise<StatSummary>
     setGoal(input: StatSetGoalInput): Promise<StatSummary>
+  }
+  /** A1：可覆写提示词模板（计划书 §12 的关键提示词资产） */
+  prompt: {
+    list(): Promise<PromptTemplateInfo[]>
+    save(input: PromptTemplateSaveInput): Promise<PromptTemplateInfo>
+    reset(key: string): Promise<PromptTemplateInfo>
+  }
+  /** A2：文风仿写画像 */
+  style: {
+    get(projectId: number): Promise<StyleProfile | null>
+    generate(input: StyleProfileGenerateInput): Promise<StyleProfile>
+    clear(projectId: number): Promise<void>
+  }
+  /** A3：向量检索（RAG） */
+  vector: {
+    status(projectId: number): Promise<VectorIndexStatus>
+    /** 重建索引（只索引未删除项目和章节） */
+    rebuild(projectId: number): Promise<VectorIndexResult>
+    /** 调试用：直接检索 */
+    query(input: { projectId: number; text: string; limit?: number }): Promise<VectorRecallHit[]>
+    clear(projectId: number): Promise<void>
+  }
+  /** A4：自动更新 */
+  update: {
+    status(): Promise<UpdateStatus>
+    check(): Promise<UpdateStatus>
+    download(): Promise<UpdateStatus>
+    install(): Promise<void>
+    onEvent(listener: (event: UpdateStatus) => void): () => void
+  }
+  /** A5：分卷（计划书 §5.1 volume） */
+  volume: {
+    list(projectId: number): Promise<Volume[]>
+    save(input: VolumeSaveInput): Promise<Volume[]>
+    remove(id: number): Promise<Volume[]>
+  }
+  /** A5：修订记录（计划书 §5.1 draft_revision） */
+  revision: {
+    list(projectId: number, chapterNo: number): Promise<DraftRevision[]>
   }
   /** M7：Electron 44 已移除 File.path，拖拽落点必须经 preload 的 webUtils 解析 */
   resolveDropPath(file: File): string

@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { MigrationProgress, MigrationResult } from '@shared/types'
-import { getLibraryJsonPath, updateConfig } from './config'
+import { getLibraryJsonPath, readConfig, updateConfig } from './config'
 import { closeDatabase, readSchemaVersion } from '../db/client'
 import { computeDirSize, precheckLibraryPath } from './precheck'
 import { getActiveEntry, isUserDataPath, libraryDbPath, openLibrary } from './registry'
@@ -86,6 +86,9 @@ export function migrateActiveLibraryTo(targetPath: string, options: MigrateOptio
 
   const targetDb = join(target, 'inkwell.db')
   let createdTargetDir = false
+  /** 指针是否已经切到目标：回滚时必须先把它恢复回源目录 */
+  let pointerSwitched = false
+  const migratedFlagBefore = readConfig().migratedFromUserData
 
   try {
     assertNotAborted(signal)
@@ -132,6 +135,7 @@ export function migrateActiveLibraryTo(targetPath: string, options: MigrateOptio
       entry.lastOpenedAt = Date.now()
       current.migratedFromUserData = true
     })
+    pointerSwitched = true
 
     const info = openLibrary(sourceEntry.id)
     report('done', '迁移完成', 100)
@@ -139,7 +143,25 @@ export function migrateActiveLibraryTo(targetPath: string, options: MigrateOptio
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
 
-    // 回滚：删除目标半成品，重新打开源库，指针保持不变
+    // 回滚顺序是关键：先把 config 指针恢复回源目录，再删除目标半成品，最后重开源库。
+    // 若先删目标半成品，指针还指着 target，源库数据虽在、配置里却没有任何条目指向它，
+    // 用户看到的会是「一本空书」甚至彻底没有数据库。
+    if (pointerSwitched) {
+      try {
+        updateConfig((current) => {
+          const entry = current.libraries.find((item) => item.id === sourceEntry.id)
+          if (entry) {
+            entry.path = sourceRoot
+            entry.lastOpenedAt = Date.now()
+          }
+          current.migratedFromUserData = migratedFlagBefore
+        })
+      } catch {
+        // 指针恢复失败也继续清理，但错误信息里已经带上原因
+      }
+    }
+
+    // 删除目标半成品（此时指针已不再指向它）
     try {
       if (existsSync(targetDb)) rmSync(targetDb, { force: true })
       for (const dir of AUX_DIRS) {
@@ -155,6 +177,7 @@ export function migrateActiveLibraryTo(targetPath: string, options: MigrateOptio
       // 清理失败不改变结论
     }
     try {
+      closeDatabase()
       openLibrary(sourceEntry.id)
     } catch {
       // 源库重开失败（例如文件被占用），交由上层处理

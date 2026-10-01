@@ -4,6 +4,8 @@ import { getLatestReview, saveReview } from '../db/memory-repo'
 import { listSteps, upsertStep } from '../db/pipeline-repo'
 import { buildMessagesFor } from '../prompts/zh-CN'
 import { buildChapterContext } from '../llm/context'
+import { augmentContext } from '../search/recall'
+import { indexChapterDraft } from '../search/vector'
 import { invokeChat } from '../llm/invoke'
 import { auditChapter } from './audit'
 import { commitMemory } from './memory'
@@ -53,7 +55,9 @@ export async function runChapter(options: RunChapterOptions): Promise<ChapterRes
   upsertStep(runId, chapterNo, 'assemble', true)
 
   const guidance = [bundle.context.userGuidance, options.steerGuidance].filter((item) => item.trim()).join('\n')
-  const context = { ...bundle.context, userGuidance: guidance }
+  // A3：连写时同样按细纲召回相关回忆（不可用则原样返回）
+  const recalled = await augmentContext(bundle, signal)
+  const context = { ...recalled, userGuidance: guidance }
 
   /* -------------------------------- 2. 起草 -------------------------------- */
   let draft: ChapterDraft
@@ -83,6 +87,8 @@ export async function runChapter(options: RunChapterOptions): Promise<ChapterRes
       source: 'write',
       content: trimmed
     })
+    // A3：连写场景下每章落盘即入索引，后面的章节才能召回它
+    await indexChapterDraft(projectId, chapterNo, draft.id, draft.content, signal)
     upsertStep(runId, chapterNo, 'draft', true)
   }
 

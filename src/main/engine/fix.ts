@@ -6,6 +6,7 @@ import { buildChapterContext } from '../llm/context'
 import { invokeChat } from '../llm/invoke'
 import { auditChapter } from './audit'
 import { applyStyleRules } from './rules'
+import { recordRevision } from '../db/revision-repo'
 
 export interface FixChapterInput {
   projectId: number
@@ -106,6 +107,21 @@ export async function fixChapter(input: FixChapterInput): Promise<FixResult> {
     status: 'revised',
     source: 'fix',
     content
+  })
+
+  // A5：记一条修订，说明「这一版是怎么来的、依据是哪些问题」
+  recordRevision({
+    projectId,
+    chapterNo,
+    baseDraftId: latest.id,
+    draftId: draft.id,
+    type: 'review-fix',
+    userPrompt:
+      issues.length > 0
+        ? `修复维度：${[...new Set(issues.map((check) => check.dimension))].join('、')}` +
+          (modelUsed ? '（含模型定点修复）' : '（仅确定性规则）')
+        : '确定性去 AI 味规则',
+    content: draft.content
   })
 
   // 4. 重审：形成修复前后的可观测对比

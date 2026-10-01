@@ -11,9 +11,13 @@ interface DropZoneProps {
   onDropPaths: (paths: string[], target: string) => Promise<DropResult[]>
 }
 
-/** 从落点元素向上找最近的分流标记（data-drop-zone） */
-function resolveTarget(event: DragEvent): string {
-  const element = document.elementFromPoint(event.clientX, event.clientY)
+/**
+ * 从落点元素向上找最近的分流标记（data-drop-zone）。
+ * drop 事件的 clientX/clientY 不保证可靠，优先用 dragover 期间记录的最后一次坐标，
+ * 两者都取不到时才回退到书架（并明确不是静默猜测）。
+ */
+function resolveTarget(x: number, y: number): string {
+  const element = document.elementFromPoint(x, y)
   return element?.closest('[data-drop-zone]')?.getAttribute('data-drop-zone') ?? 'bookshelf'
 }
 
@@ -30,6 +34,8 @@ export default function DropZone({ onDropPaths }: DropZoneProps) {
   const [failed, setFailed] = useState<string[]>([])
   const [lastTarget, setLastTarget] = useState('bookshelf')
   const depth = useRef(0)
+  /** 最后一次 dragover 的坐标：drop 事件的坐标在拖放中不保证可靠 */
+  const lastPoint = useRef<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
     const hasFiles = (event: DragEvent): boolean =>
@@ -42,7 +48,9 @@ export default function DropZone({ onDropPaths }: DropZoneProps) {
       setDragging(true)
     }
     const onOver = (event: DragEvent): void => {
-      if (hasFiles(event)) event.preventDefault()
+      if (!hasFiles(event)) return
+      event.preventDefault()
+      if (event.clientX || event.clientY) lastPoint.current = { x: event.clientX, y: event.clientY }
     }
     const onLeave = (event: DragEvent): void => {
       if (!hasFiles(event)) return
@@ -57,7 +65,11 @@ export default function DropZone({ onDropPaths }: DropZoneProps) {
       event.preventDefault()
       depth.current = 0
       setDragging(false)
-      const target = resolveTarget(event)
+      const point =
+        event.clientX || event.clientY
+          ? { x: event.clientX, y: event.clientY }
+          : (lastPoint.current ?? { x: 0, y: 0 })
+      const target = resolveTarget(point.x, point.y)
       setLastTarget(target)
       const paths = Array.from(event.dataTransfer?.files ?? [])
         .map((file) => window.inkwell.resolveDropPath(file))

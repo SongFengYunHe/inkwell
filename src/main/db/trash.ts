@@ -170,10 +170,25 @@ export function purgeTrash(item: { kind: 'project' | 'chapter'; id: number }): v
   }
   const row = db.select().from(chapterBrief).where(eq(chapterBrief.id, item.id)).get()
   if (!row) return
-  db.delete(chapterDraft)
-    .where(and(eq(chapterDraft.projectId, row.projectId), eq(chapterDraft.chapterNo, row.chapterNo)))
-    .run()
-  db.delete(chapterBrief).where(eq(chapterBrief.id, item.id)).run()
+
+  // 章节号是可以被复用的（v5 起唯一索引带 deleted_at IS NULL 条件）：
+  // 删掉第 5 章后又新写了第 5 章，若按 (project_id, chapter_no) 无条件硬删，
+  // 会把「活的」新正文一起删掉。这里只删「与这条细纲同批被软删除」的草稿，
+  // 与 restoreChapter 成组匹配的口径保持一致。
+  const stamp = row.deletedAt
+  db.transaction(() => {
+    db.delete(chapterDraft)
+      .where(
+        and(
+          eq(chapterDraft.projectId, row.projectId),
+          eq(chapterDraft.chapterNo, row.chapterNo),
+          isNotNull(chapterDraft.deletedAt),
+          stamp === null ? isNotNull(chapterDraft.deletedAt) : eq(chapterDraft.deletedAt, stamp)
+        )
+      )
+      .run()
+    db.delete(chapterBrief).where(eq(chapterBrief.id, item.id)).run()
+  })
 }
 
 /** 清空回收站 */

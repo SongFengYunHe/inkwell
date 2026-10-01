@@ -77,13 +77,28 @@ export default function BackupPanel() {
   }
 
   const toggleSetting = async (patch: Partial<LibrarySettings>): Promise<void> => {
-    const next = await window.inkwell.library.saveSettings(patch)
-    setSettings(next)
+    const before = settings
+    setMessage('')
+    try {
+      const next = await window.inkwell.library.saveSettings(patch)
+      setSettings(next)
+    } catch (err) {
+      // 保存失败时把复选框回滚到落盘状态，避免「界面看着生效、实际没保存」
+      setSettings(before)
+      setMessage(`设置保存失败：${err instanceof Error ? err.message : String(err)}`)
+    }
   }
 
   const clearCache = async (): Promise<void> => {
-    const result = await window.inkwell.app.clearCache()
-    setMessage(`已清理运行时缓存，释放 ${formatBytes(result.freedBytes)}`)
+    setBusy(true)
+    try {
+      const result = await window.inkwell.app.clearCache()
+      setMessage(`已清理运行时缓存，释放 ${formatBytes(result.freedBytes)}`)
+    } catch (err) {
+      setMessage(`清理缓存失败：${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (

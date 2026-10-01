@@ -32,6 +32,7 @@ import type {
   ImportEvent,
   ImportSession,
   ImportUpdateItemInput,
+  ImportUpdateItemsInput,
   StatSummary,
   StatSetGoalInput
 } from '@shared/types'
@@ -213,6 +214,8 @@ interface AppState {
   }) => Promise<ImportSession | null>
   /** 改单条 action / enabled */
   updateImportItem: (input: ImportUpdateItemInput) => Promise<void>
+  /** 批量改多条（全选 / 只选新建等） */
+  updateImportItems: (input: ImportUpdateItemsInput) => Promise<void>
   /** 重跑体检 */
   revalidateImport: (requiredFields?: BriefFieldKey[]) => Promise<void>
   /** 仅导入选中项 */
@@ -247,6 +250,27 @@ async function guard<T>(set: (partial: Partial<AppState>) => void, fn: () => Pro
   } catch (err) {
     set({ error: err instanceof Error ? err.message : String(err) })
     return undefined
+  } finally {
+    set({ loading: false })
+  }
+}
+
+/**
+ * 与 guard 同类，但用于返回 void 的写操作：
+ * 返回 boolean 而不是 T | undefined，避免「成功也是 undefined」无法区分成败，
+ * 从而防止删除失败却弹出「已移入回收站」的错误提示。
+ */
+async function guardOk(
+  set: (partial: Partial<AppState>) => void,
+  fn: () => Promise<unknown>
+): Promise<boolean> {
+  try {
+    set({ loading: true, error: null })
+    await fn()
+    return true
+  } catch (err) {
+    set({ error: err instanceof Error ? err.message : String(err) })
+    return false
   } finally {
     set({ loading: false })
   }
@@ -326,14 +350,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeProject: async (id) => {
-    const removed = get().projects.find((item) => item.id === id)
-    await guard(set, () => window.inkwell.project.remove(id))
+    const target = get().projects.find((item) => item.id === id)
+    const ok = await guardOk(set, () => window.inkwell.project.remove(id))
+    if (!ok) return
     if (get().activeProjectId === id) set({ activeProjectId: null, briefs: [], drafts: [] })
     await get().loadProjects()
-    if (removed) {
+    if (target) {
       set({
         undo: {
-          message: `已把「${removed.name}」移入回收站`,
+          message: `已把「${target.name}」移入回收站`,
           run: async () => {
             await window.inkwell.trash.restore({ kind: 'project', id })
             await get().loadProjects()
@@ -386,19 +411,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeBrief: async (id) => {
-    const removed = get().briefs.find((item) => item.id === id)
-    await guard(set, () => window.inkwell.brief.remove(id))
+    const target = get().briefs.find((item) => item.id === id)
+    const ok = await guardOk(set, () => window.inkwell.brief.remove(id))
+    if (!ok) return
     await get().reloadBriefs()
     await get().reloadDrafts()
-    if (removed) {
+    if (target) {
       set({
         undo: {
-          message: `已把第 ${removed.chapterNo} 章移入回收站`,
+          message: `已把第 ${target.chapterNo} 章移入回收站`,
           run: async () => {
             const result = await window.inkwell.trash.restore({ kind: 'chapter', id })
             await get().reloadBriefs()
             await get().reloadDrafts()
-            if (result.chapterNo && result.chapterNo !== removed.chapterNo) {
+            if (result.chapterNo && result.chapterNo !== target.chapterNo) {
               set({ notice: `原章节号已被占用，已恢复到第 ${result.chapterNo} 章` })
             }
           }
@@ -419,22 +445,23 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeDraft: async (id) => {
-    const removed = get().drafts.find((item) => item.id === id)
-    await guard(set, () => window.inkwell.draft.remove(id))
+    const target = get().drafts.find((item) => item.id === id)
+    const ok = await guardOk(set, () => window.inkwell.draft.remove(id))
+    if (!ok) return
     await get().reloadDrafts()
-    if (removed) {
+    if (target) {
       set({
         undo: {
-          message: `已把第 ${removed.chapterNo} 章 v${removed.version} 移入回收站`,
+          message: `已把第 ${target.chapterNo} 章 v${target.version} 移入回收站`,
           run: async () => {
             // 软删除行不占用唯一索引，按原版本号重建即可
             await window.inkwell.draft.save({
-              projectId: removed.projectId,
-              chapterNo: removed.chapterNo,
-              version: removed.version,
-              status: removed.status,
-              source: removed.source,
-              content: removed.content
+              projectId: target.projectId,
+              chapterNo: target.chapterNo,
+              version: target.version,
+              status: target.status,
+              source: target.source,
+              content: target.content
             })
             await get().reloadDrafts()
           }
@@ -845,6 +872,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   updateImportItem: async (input) => {
     const session = await guard(set, () => window.inkwell.import.updateItem(input))
+    if (session) set({ importSession: session })
+  },
+
+  updateImportItems: async (input) => {
+    // 一次 IPC 往返改完：逐条往返在几百章时会让界面长时间「按不动」
+    const session = await guard(set, () => window.inkwell.import.updateItems(input))
     if (session) set({ importSession: session })
   },
 

@@ -10,6 +10,7 @@ import type {
 } from '@shared/types'
 import { getDb } from './client'
 import { chapterBrief, chapterDraft, project } from './schema'
+import { ensureVolume } from './volume-repo'
 import { isQuitting } from '../lifecycle'
 import { addChaptersDone, addWords } from '../stat/tracker'
 
@@ -112,6 +113,7 @@ export function listBriefs(projectId: number): ChapterBrief[] {
 
 /** 保存细纲：按 (projectId, chapterNo) 唯一，存在即更新，否则新建 */
 export function saveBrief(input: BriefSaveInput): ChapterBrief {
+  // A5：细纲写入时顺带确保所属分卷存在，避免出现「有章节、无卷」的悬空数据
   assertWritable()
   const db = getDb()
   const now = Date.now()
@@ -129,15 +131,17 @@ export function saveBrief(input: BriefSaveInput): ChapterBrief {
 
   if (existing) {
     const patch = pickDefined(input, BRIEF_IMMUTABLE)
-    return db
+    const updated = db
       .update(chapterBrief)
       .set({ ...patch, updatedAt: now })
       .where(eq(chapterBrief.id, existing.id))
       .returning()
       .get()
+    ensureVolume(updated.projectId, updated.volumeIdx)
+    return updated
   }
 
-  return db
+  const created = db
     .insert(chapterBrief)
     .values({
       projectId: input.projectId,
@@ -157,6 +161,8 @@ export function saveBrief(input: BriefSaveInput): ChapterBrief {
     })
     .returning()
     .get()
+  ensureVolume(created.projectId, created.volumeIdx)
+  return created
 }
 
 /** 删除章节 = 给 chapter_brief 与其所有 chapter_draft 打同一个时间戳（便于成组恢复） */

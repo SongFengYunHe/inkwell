@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync, statSync, statfsSync } from 'node:fs'
+import { existsSync, readdirSync, rmSync, statSync, statfsSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, parse } from 'node:path'
 import type { LibraryPrecheck } from '@shared/types'
 
@@ -103,18 +103,10 @@ export function precheckLibraryPath(targetPath: string, options: PrecheckOptions
   const dbPath = join(targetPath, 'inkwell.db')
   const hasDatabase = exists && existsSync(dbPath)
 
-  // 可写性：目录不存在则检查其可创建的父目录
-  let writable = false
-  try {
-    const probeTarget = exists ? targetPath : nearestExisting(dirname(targetPath))
-    if (probeTarget) {
-      const mode = statSync(probeTarget).mode
-      // 无写位（0o200）粗判；真正写入失败会在落盘时报错
-      writable = (mode & 0o200) !== 0
-    }
-  } catch {
-    writable = false
-  }
+  // 可写性：用真实写入探针。
+  // 注意：Windows 上 statSync().mode 的写位几乎恒为真（ACL 不体现在 mode 里），
+  // 只看 mode 会让「目标目录不可写」这条阻断形同虚设。
+  const writable = canWriteProbe(exists ? targetPath : nearestExisting(dirname(targetPath)))
   if (!writable) blockingError = '目标目录不可写，请选择其他位置'
 
   const syncProvider = detectSyncProvider(targetPath)
@@ -149,6 +141,19 @@ export function precheckLibraryPath(targetPath: string, options: PrecheckOptions
     sourceBytes,
     blockingError,
     warnings
+  }
+}
+
+/** 真实写入探针：能创建并删除一个临时文件才算可写 */
+function canWriteProbe(dir: string | null): boolean {
+  if (!dir) return false
+  const probe = join(dir, `.inkwell-write-probe-${process.pid}-${Date.now()}`)
+  try {
+    writeFileSync(probe, 'ok', 'utf8')
+    rmSync(probe, { force: true })
+    return true
+  } catch {
+    return false
   }
 }
 

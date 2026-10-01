@@ -77,7 +77,10 @@ export function searchFts(
   const table = FTS_TABLE[source]
   const cols = FTS_TEXT_COLUMNS[source]
   const select = ['rowid', 'chapter_no', 'project_id', ...cols].join(', ')
-  const whereProject = projectId === undefined ? '' : ' AND project_id = ?'
+  // 项目整体移入回收站时只改了 project.deleted_at，子表不受影响；
+  // 不 join project 就会搜到「已删掉的书」。
+  const liveProject = ' AND project_id IN (SELECT id FROM project WHERE deleted_at IS NULL)'
+  const whereProject = (projectId === undefined ? '' : ' AND project_id = ?') + liveProject
   const sql = `SELECT ${select} FROM ${table} WHERE ${table} MATCH ?${whereProject} LIMIT ?`
   const params: unknown[] = projectId === undefined ? [matchExpr, limit] : [matchExpr, projectId, limit]
 

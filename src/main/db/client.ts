@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import * as schema from './schema'
 import { migrations } from './migrations'
@@ -28,13 +28,24 @@ export function initDatabase(filePath: string, options: InitDatabaseOptions = {}
 
   const mode: JournalMode = options.journalMode ?? 'WAL'
   const connection = new Database(filePath)
-  connection.pragma(`journal_mode = ${mode}`)
-  connection.pragma('foreign_keys = ON')
-  connection.pragma('synchronous = NORMAL')
-  // 桌面应用与 MCP Server 可能同时打开同一个库，给写入留出重试时间
-  connection.pragma('busy_timeout = 5000')
+  try {
+    connection.pragma(`journal_mode = ${mode}`)
+    connection.pragma('foreign_keys = ON')
+    connection.pragma('synchronous = NORMAL')
+    // 桌面应用与 MCP Server 可能同时打开同一个库，给写入留出重试时间
+    connection.pragma('busy_timeout = 5000')
 
-  runMigrations(connection, filePath)
+    runMigrations(connection, filePath)
+  } catch (error) {
+    // 关键：失败必须在这里 close，否则 sqlite/db 还没赋值，closeDatabase() 会空转，
+    // 库文件被进程占住（Windows 上后续删除 / 改名 / 重试打开都会 EBUSY）。
+    try {
+      connection.close()
+    } catch {
+      // 关闭失败不覆盖原始错误
+    }
+    throw error
+  }
 
   sqlite = connection
   db = drizzle(connection, { schema })
@@ -111,9 +122,15 @@ function backupBeforeMigrate(
 ): void {
   if (appliedCount <= 0) return
   const dir = join(dirname(filePath), 'backups')
-  const target = join(dir, `inkwell-${backupStamp()}-pre-migrate-v${targetVersion}.db`)
+  // reason 里带版本号、且纳入 backups 的命名规范（BACKUP_RE 已放宽到 [a-z0-9-]+），
+  // 这样迁移前快照会出现在「备份」列表里，也参与轮转，不会无限堆积。
+  const base = `inkwell-${backupStamp()}-premigrate-v${targetVersion}`
+  let target = join(dir, `${base}.db`)
   try {
     mkdirSync(dir, { recursive: true })
+    for (let i = 2; existsSync(target) && i < 60; i += 1) {
+      target = join(dir, `${base}-${i}.db`)
+    }
     connection.pragma('wal_checkpoint(TRUNCATE)')
     connection.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`)
     console.log(`[inkwell] pre-migration backup created: ${target}`)
@@ -136,6 +153,17 @@ function runMigrations(connection: Database.Database, filePath: string): void {
     .prepare('SELECT version FROM schema_version')
     .all() as Array<{ version: number }>
   const applied = new Set(appliedRows.map((row) => row.version))
+
+  // 用旧版程序打开新版程序写过的库：结构可能已经变了，静默按旧结构读写会损坏数据。
+  const known = latestSchemaVersion()
+  for (const version of applied) {
+    if (version > known) {
+      throw new Error(
+        `这个书库由更新版本的 Inkwell 创建（schema v${version} > 当前支持 v${known}）。` +
+          '请升级 Inkwell 后再打开，或改用「挂载」另一个书库。'
+      )
+    }
+  }
 
   const pending = migrations.filter((migration) => !applied.has(migration.version))
   if (pending.length > 0) {

@@ -90,3 +90,22 @@ export const memoryDraftSchema = z.object({
 })
 
 export type MemoryDraft = z.infer<typeof memoryDraftSchema>
+
+/* ============================ A2：文风仿写画像 ============================ */
+
+/** 文风画像（模型输出；字段全部有默认值，容忍模型少给） */
+export const styleProfileDraftSchema = z.object({
+  summary: z.string().max(500).default(''),
+  tone: z.string().max(500).default(''),
+  pov: z.string().max(500).default(''),
+  sentence: z.string().max(1_000).default(''),
+  diction: z.string().max(1_000).default(''),
+  dialogue: z.string().max(1_000).default(''),
+  imagery: z.string().max(1_000).default(''),
+  pacing: z.string().max(1_000).default(''),
+  taboos: z.array(z.string().max(200)).max(12).default([]),
+  keywords: z.array(z.string().max(80)).max(40).default([]),
+  samples: z.array(z.string().max(300)).max(6).default([])
+})
+
+export type StyleProfileDraft = z.infer<typeof styleProfileDraftSchema>

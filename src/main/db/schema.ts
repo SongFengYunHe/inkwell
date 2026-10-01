@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { sqliteTable, integer, text, index, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import { blob, sqliteTable, integer, text, index, uniqueIndex } from 'drizzle-orm/sqlite-core'
 import type {
   AuditReport,
   BriefFieldKey,
@@ -33,6 +33,8 @@ export const project = sqliteTable('project', {
   goldenFinger: text('golden_finger').notNull().default(''),
   globalGuidance: text('global_guidance').notNull().default(''),
   coreOutline: text('core_outline').notNull().default(''),
+  /** A2 文风画像（JSON；空字符串表示尚未生成） */
+  styleProfile: text('style_profile').notNull().default(''),
   /** 软删除时间戳；非空表示已移入回收站 */
   deletedAt: integer('deleted_at'),
   createdAt: integer('created_at').notNull(),
@@ -416,6 +418,94 @@ export const writingGoal = sqliteTable('writing_goal', {
   dailyChapters: integer('daily_chapters').notNull().default(1),
   createdAt: integer('created_at')
 })
+
+/* ==================== M9（A1–A5）：模板 / 文风 / 向量 / 分卷 / 修订 ==================== */
+
+/**
+ * A1 可覆写提示词模板（覆写层）。
+ * 只存「被用户改过」的行；没有行 = 用内置默认，因此内置模板升级后老库自动跟随。
+ */
+export const promptTemplate = sqliteTable(
+  'prompt_template',
+  {
+    key: text('key').notNull(),
+    locale: text('locale').notNull().default('zh-CN'),
+    systemBody: text('system_body').notNull().default(''),
+    instructionBody: text('instruction_body').notNull().default(''),
+    version: integer('version').notNull().default(1),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (t) => [uniqueIndex('prompt_template_key_locale_uq').on(t.key, t.locale)]
+)
+
+/** A5 分卷（计划书 §5.1 volume）：卷标题 / 卷梗概 */
+export const volume = sqliteTable(
+  'volume',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    idx: integer('idx').notNull().default(1),
+    title: text('title').notNull().default(''),
+    synopsis: text('synopsis').notNull().default(''),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (t) => [uniqueIndex('volume_project_idx_uq').on(t.projectId, t.idx)]
+)
+
+/** A5 修订记录（计划书 §5.1 draft_revision）：这次改动「为什么改、改了什么」 */
+export const draftRevision = sqliteTable(
+  'draft_revision',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    chapterNo: integer('chapter_no').notNull(),
+    /** 改动前的版本 id */
+    baseDraftId: integer('base_draft_id'),
+    /** 改动后的版本 id */
+    draftId: integer('draft_id'),
+    idx: integer('idx').notNull().default(1),
+    /** refine | review-fix | polish | rewrite | manual */
+    type: text('type').notNull().default('refine'),
+    /** applied | reverted */
+    status: text('status').notNull().default('applied'),
+    /** 改动来由（如命中的审计维度清单） */
+    userPrompt: text('user_prompt').notNull().default(''),
+    content: text('content').notNull().default(''),
+    wordCount: integer('word_count').notNull().default(0),
+    createdAt: integer('created_at').notNull()
+  },
+  (t) => [index('draft_revision_project_chapter_idx').on(t.projectId, t.chapterNo)]
+)
+
+/** A3 向量索引：正文分块 + embedding（vector = Float32Array 的 BLOB） */
+export const embedding = sqliteTable(
+  'embedding',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    /** draft | brief | memory */
+    sourceType: text('source_type').notNull().default('draft'),
+    sourceId: integer('source_id').notNull().default(0),
+    chapterNo: integer('chapter_no').notNull().default(0),
+    chunkIdx: integer('chunk_idx').notNull().default(0),
+    text: text('text').notNull().default(''),
+    dim: integer('dim').notNull().default(0),
+    vector: blob('vector'),
+    model: text('model').notNull().default(''),
+    createdAt: integer('created_at').notNull()
+  },
+  (t) => [
+    uniqueIndex('embedding_source_uq').on(t.projectId, t.sourceType, t.sourceId, t.chunkIdx),
+    index('embedding_project_chapter_idx').on(t.projectId, t.chapterNo)
+  ]
+)
 
 /** 迁移版本表（schema_version 驱动迁移） */
 export const schemaVersion = sqliteTable('schema_version', {

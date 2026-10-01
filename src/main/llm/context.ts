@@ -1,6 +1,7 @@
 import type { ChapterBrief, ChapterDraft, Project } from '@shared/types'
 import { getProject, listBriefs, listDrafts } from '../db/repositories'
 import { buildTruthSnapshot } from '../engine/truth'
+import { styleProfileForPrompt } from '../engine/style'
 import type { ChapterPromptContext } from '../prompts/zh-CN'
 
 const PREVIOUS_EXCERPT_CHARS = 800
@@ -65,6 +66,10 @@ export function buildChapterContext(projectId: number, chapterNo: number): Chapt
       characterStates: memory.characterStates,
       activeHooks: memory.pendingHooks,
       recentSummaries: memory.recentSummaries,
+      // A2：文风画像（同步读库，无画像时为空串）
+      styleProfile: styleProfileForPrompt(projectId),
+      // A3：向量召回由 augmentContext 异步补上（这里保持纯同步、可离线）
+      recalledMemories: '',
       targetWords: project.wordsPerChapter
     }
   }

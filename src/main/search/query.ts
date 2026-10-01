@@ -126,7 +126,8 @@ function searchLikeSource(
   }
 
   const { table, expr, columns, deletedGuard } = config[source]
-  const conditions: string[] = [deletedGuard]
+  // 同 FTS 分支：已移入回收站的项目，其正文 / 细纲 / 记忆都不应再被搜到
+  const conditions: string[] = [deletedGuard, 'project_id IN (SELECT id FROM project WHERE deleted_at IS NULL)']
   const params: unknown[] = []
 
   if (projectId !== undefined) {

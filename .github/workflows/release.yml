@@ -1,0 +1,46 @@
+name: release
+
+# 打 tag 即发布：构建 NSIS 安装包 + latest.yml / app-update.yml 到 GitHub Releases，
+# 供应用内的 electron-updater 自动更新使用（A4）。
+# 使用内置 GITHUB_TOKEN，无需额外配置密钥。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build & publish release
+        run: npm run clean:release && npx electron-vite build && npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload artifacts (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: inkwell-release
+          path: |
+            release/*-setup.exe
+            release/latest.yml
+          if-no-files-found: error
+          retention-days: 14

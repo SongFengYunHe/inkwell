@@ -27,11 +27,9 @@ export default function Workspace() {
   const briefs = useAppStore((s) => s.briefs)
   const drafts = useAppStore((s) => s.drafts)
   const loading = useAppStore((s) => s.loading)
-  const currentChapterNo = useAppStore((s) => s.currentChapterNo)
   const backToBookshelf = useAppStore((s) => s.backToBookshelf)
   const setView = useAppStore((s) => s.setView)
   const focusMode = useAppStore((s) => s.focusMode)
-  const setFocusMode = useAppStore((s) => s.setFocusMode)
 
   const [tab, setTab] = useState<Tab>('brief')
   const [exportOpen, setExportOpen] = useState(false)
@@ -46,33 +44,11 @@ export default function Workspace() {
 
   const writtenChapters = new Set(drafts.filter((item) => item.content.trim()).map((item) => item.chapterNo)).size
 
-  // 专注模式（M5）：只保留正文，隐藏顶栏 / 章节导航 / Tab / 提示
-  if (focusMode) {
-    return (
-      <div className="flex h-full min-h-0 flex-col bg-stone-100 px-6 py-5">
-        <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="truncate text-xs text-stone-400">
-              {project.name} · 第 {currentChapterNo} 章
-            </span>
-            <button
-              type="button"
-              onClick={() => setFocusMode(false)}
-              className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs text-stone-600 transition hover:bg-stone-50"
-            >
-              退出专注
-            </button>
-          </div>
-          <div className="min-h-0 flex-1">
-            <DraftPanel focus />
-          </div>
-        </div>
-      </div>
-    )
-  }
-
+  // 专注模式（M5）：只作为「布局开关」——不再切换到另一棵 React 树，
+  // 否则 DraftPanel 会被卸载重建，本地未保存的正文会直接丢失（上一版真实存在的 bug）。
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {!focusMode && (
       <header className="flex items-center gap-4 border-b border-stone-200 bg-white px-5 py-3">
         <button
           type="button"
@@ -114,15 +90,16 @@ export default function Workspace() {
           </button>
         </div>
       </header>
+      )}
 
-      <WizardBanner />
-      <PipelineBar />
+      {!focusMode && <WizardBanner />}
+      {!focusMode && <PipelineBar />}
 
       <div className="flex min-h-0 flex-1">
-        <ChapterNav />
+        {!focusMode && <ChapterNav />}
 
-        <main className="flex min-h-0 flex-1 flex-col bg-stone-100">
-          <nav className="flex gap-1 border-b border-stone-200 bg-white px-4">
+        <main className={`flex min-h-0 flex-1 flex-col bg-stone-100 ${focusMode ? 'px-6 py-5' : ''}`}>
+          <nav className={`flex gap-1 border-b border-stone-200 bg-white px-4 ${focusMode ? 'hidden' : ''}`}>
             {TABS.map((item) => (
               <button
                 key={item.key}
@@ -140,11 +117,21 @@ export default function Workspace() {
           </nav>
 
           <div className="min-h-0 flex-1 overflow-hidden">
-            {tab === 'draft' ? (
-              <div data-drop-zone="draft" className="flex h-full min-h-0 flex-col p-5">
-                <DraftPanel />
-              </div>
-            ) : (
+            {/* 正文面板固定在同一个位置、始终挂载：
+                切 Tab 或进专注模式都不会重建它，未保存的编辑因此不会丢。 */}
+            <div
+              data-drop-zone="draft"
+              className={
+                focusMode || tab === 'draft'
+                  ? focusMode
+                    ? 'mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col'
+                    : 'flex h-full min-h-0 flex-col p-5'
+                  : 'hidden'
+              }
+            >
+              <DraftPanel />
+            </div>
+            {!focusMode && tab !== 'draft' && (
               <div
                 className="h-full overflow-y-auto p-5"
                 data-drop-zone={tab === 'memory' ? undefined : 'outline'}

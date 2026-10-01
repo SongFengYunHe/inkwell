@@ -1,4 +1,4 @@
-import type { GenerationMode } from '@shared/types'
+import type { DraftRevision, GenerationMode } from '@shared/types'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../stores/appStore'
 import { BUTTON_GHOST, BUTTON_PRIMARY } from './ui'
@@ -14,7 +14,7 @@ function countWords(text: string): number {
   return text.replace(/\s/g, '').length
 }
 
-export default function DraftPanel({ focus = false }: { focus?: boolean }) {
+export default function DraftPanel() {
   const activeProjectId = useAppStore((s) => s.activeProjectId)
   const briefs = useAppStore((s) => s.briefs)
   const drafts = useAppStore((s) => s.drafts)
@@ -36,6 +36,8 @@ export default function DraftPanel({ focus = false }: { focus?: boolean }) {
   const clearFixResult = useAppStore((s) => s.clearFixResult)
 
   const toggleFocusMode = useAppStore((s) => s.toggleFocusMode)
+  /** 专注模式由 store 驱动：Workspace 不再切换到另一棵树，避免正文面板被卸载重建 */
+  const focusMode = useAppStore((s) => s.focusMode)
 
   const brief = briefs.find((item) => item.chapterNo === currentChapterNo) ?? null
   const versions = useMemo(
@@ -51,6 +53,17 @@ export default function DraftPanel({ focus = false }: { focus?: boolean }) {
   const current = versions.find((item) => item.version === selectedVersion) ?? latest
 
   const [content, setContent] = useState('')
+  /** A5：本章修订历史（每次一键修复 / 润色 / 重写都会记一条） */
+  const [revisions, setRevisions] = useState<DraftRevision[]>([])
+
+  useEffect(() => {
+    if (activeProjectId === null) {
+      setRevisions([])
+      return
+    }
+    void window.inkwell.revision.list(activeProjectId, currentChapterNo).then(setRevisions)
+  }, [activeProjectId, currentChapterNo, current?.id, fixResult])
+
   useEffect(() => {
     setSelectedVersion(null)
   }, [currentChapterNo, activeProjectId])
@@ -72,10 +85,47 @@ export default function DraftPanel({ focus = false }: { focus?: boolean }) {
     void generate(mode)
   }
 
-  // 专注模式：隐藏全部工具栏与提示，只留正文（计划书 §8.3）
-  if (focus) {
+  /** 保存当前编辑内容（专注模式与常规模式共用） */
+  const saveContent = (): void => {
+    if (!current) return
+    void saveDraft({
+      id: current.id,
+      projectId: current.projectId,
+      chapterNo: current.chapterNo,
+      version: current.version,
+      content
+    })
+  }
+
+  // 专注模式：隐藏全部工具栏与提示，只留正文与保存入口（计划书 §8.3）
+  if (focusMode) {
     return (
-      <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-full min-h-0 flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <span className="truncate text-xs text-stone-400">
+            第 {currentChapterNo} 章 · {brief?.title || '（未命名）'}
+            {dirty && <span className="ml-2 text-amber-600">有未保存修改</span>}
+          </span>
+          <div className="flex items-center gap-2">
+            {current && !isStreamingHere && (
+              <button
+                type="button"
+                disabled={!dirty || loading}
+                onClick={saveContent}
+                className={`${BUTTON_PRIMARY} px-3 py-1.5 text-xs`}
+              >
+                保存修改
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => toggleFocusMode()}
+              className={`${BUTTON_GHOST} px-3 py-1.5 text-xs`}
+            >
+              退出专注
+            </button>
+          </div>
+        </div>
         {isStreamingHere ? (
           <div
             ref={streamRef}
@@ -177,7 +227,10 @@ export default function DraftPanel({ focus = false }: { focus?: boolean }) {
               版本
               <select
                 value={current?.version ?? ''}
-                onChange={(e) => setSelectedVersion(Number(e.target.value))}
+                onChange={(e) => {
+                  if (dirty && !window.confirm('当前有未保存的修改，切换版本会丢弃它们。继续？')) return
+                  setSelectedVersion(Number(e.target.value))
+                }}
                 className="rounded border border-stone-200 bg-white px-1.5 py-1 text-xs"
               >
                 {versions.map((item) => (
@@ -261,15 +314,7 @@ export default function DraftPanel({ focus = false }: { focus?: boolean }) {
           <button
             type="button"
             disabled={!dirty || loading}
-            onClick={() =>
-              void saveDraft({
-                id: current.id,
-                projectId: current.projectId,
-                chapterNo: current.chapterNo,
-                version: current.version,
-                content
-              })
-            }
+            onClick={saveContent}
             className={BUTTON_PRIMARY}
           >
             保存修改
@@ -285,6 +330,23 @@ export default function DraftPanel({ focus = false }: { focus?: boolean }) {
             v{current.version} · 来源 {current.source} · {dirty ? '有未保存修改' : '已保存'}
           </span>
         </div>
+      )}
+
+      {revisions.length > 0 && (
+        <details className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-500">
+          <summary className="cursor-pointer select-none">修订历史（{revisions.length} 条）</summary>
+          <ul className="mt-2 space-y-1">
+            {revisions.slice(0, 8).map((item) => (
+              <li key={item.id} className="flex gap-2">
+                <span className="shrink-0 text-stone-400">#{item.idx}</span>
+                <span className="shrink-0 text-stone-500">{item.type}</span>
+                <span className="min-w-0 flex-1 truncate text-stone-600">{item.userPrompt || '—'}</span>
+                <span className="shrink-0 text-stone-400">{item.wordCount} 字</span>
+                <span className="shrink-0 text-stone-400">{new Date(item.createdAt).toLocaleString('zh-CN')}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
     </div>
   )

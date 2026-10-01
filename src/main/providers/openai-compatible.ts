@@ -1,4 +1,4 @@
-import type { ChatChunk, ChatProvider, ChatRequest } from './types'
+import type { ChatChunk, ChatProvider, ChatRequest, EmbedRequest, EmbedResponse } from './types'
 import type { ProviderTestResult } from '@shared/types'
 
 export interface OpenAiCompatibleConfig {
@@ -16,6 +16,13 @@ function resolveChatUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim().replace(/\/+$/, '')
   if (/\/chat\/completions$/i.test(trimmed)) return trimmed
   return `${trimmed}/chat/completions`
+}
+
+/** embeddings 地址：兼容用户把 baseUrl 填成 /chat/completions 的情况 */
+function resolveEmbeddingsUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, '').replace(/\/chat\/completions$/i, '')
+  if (/\/embeddings$/i.test(trimmed)) return trimmed
+  return `${trimmed}/embeddings`
 }
 
 function truncate(text: string, max: number): string {
@@ -113,6 +120,38 @@ export class OpenAiCompatibleProvider implements ChatProvider {
     } finally {
       reader.releaseLock()
     }
+  }
+
+  /**
+   * A3：OpenAI 兼容的 /embeddings。
+   * 注意：并非所有"OpenAI 兼容"端点都提供 embeddings（很多中转只做 chat），
+   * 因此这里失败要给出明确文案，让上层把向量检索当作「不可用」而非崩溃。
+   */
+  async embed(request: EmbedRequest, signal?: AbortSignal): Promise<EmbedResponse> {
+    const response = await fetch(resolveEmbeddingsUrl(this.config.baseUrl), {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({ model: request.model, input: request.input }),
+      signal
+    })
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      throw new Error(
+        `该端点不支持 embedding（HTTP ${response.status}）：${truncate(detail, 200)}。` +
+          '请在「设置 · 角色路由」里为「向量（embedder）」单独指定一个支持 embeddings 的端点。'
+      )
+    }
+
+    const payload = (await response.json()) as {
+      data?: Array<{ embedding?: number[] }>
+      usage?: { prompt_tokens?: number }
+    }
+    const vectors = (payload.data ?? []).map((item) => item.embedding ?? [])
+    if (vectors.length !== request.input.length || vectors.some((vector) => vector.length === 0)) {
+      throw new Error('端点返回的 embedding 数量或维度不符合预期')
+    }
+    return { vectors, promptTokens: payload.usage?.prompt_tokens }
   }
 
   async health(signal?: AbortSignal): Promise<ProviderTestResult> {

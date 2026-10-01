@@ -15,6 +15,7 @@ export default function ImportReview() {
   const progress = useAppStore((s) => s.importProgress)
   const loading = useAppStore((s) => s.loading)
   const updateImportItem = useAppStore((s) => s.updateImportItem)
+  const updateImportItems = useAppStore((s) => s.updateImportItems)
   const commitImport = useAppStore((s) => s.commitImport)
   const cancelImport = useAppStore((s) => s.cancelImport)
 
@@ -36,10 +37,12 @@ export default function ImportReview() {
     void updateImportItem({ sessionId: session.id, itemId: item.id, enabled })
   }
   const applySelection = async (predicate: (item: ImportItem) => boolean): Promise<void> => {
-    for (const item of session.items) {
-      const want = predicate(item)
-      if (item.enabled !== want) await updateImportItem({ sessionId: session.id, itemId: item.id, enabled: want })
-    }
+    // 只把「需要变化的」条目打包成一次批量请求
+    const updates = session.items
+      .filter((item) => item.enabled !== predicate(item))
+      .map((item) => ({ itemId: item.id, enabled: predicate(item) }))
+    if (updates.length === 0) return
+    await updateImportItems({ sessionId: session.id, updates })
   }
   const swap = async (a: ImportItem, b: ImportItem): Promise<void> => {
     await updateImportItem({ sessionId: session.id, itemId: a.id, chapterNo: b.chapterNo, volumeIdx: b.volumeIdx })

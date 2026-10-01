@@ -12,6 +12,7 @@ import type {
   ImportAnalyzeInput,
   ImportEvent,
   ImportUpdateItemInput,
+  ImportUpdateItemsInput,
   ImportValidateInput,
   InkwellApi,
   LibrarySettings,
@@ -22,10 +23,14 @@ import type {
   PipelineStartInput,
   ProjectCreateInput,
   ProjectUpdateInput,
+  PromptTemplateSaveInput,
   ProviderSaveInput,
   RoleRouteSaveInput,
   SearchQueryInput,
   StatSetGoalInput,
+  StyleProfileGenerateInput,
+  UpdateStatus,
+  VolumeSaveInput,
   WizardEvent,
   WizardStartInput
 } from '@shared/types'
@@ -168,6 +173,7 @@ const api: InkwellApi = {
     analyze: (input: ImportAnalyzeInput) => ipcRenderer.invoke(IpcChannel.importAnalyze, input),
     session: (id: string) => ipcRenderer.invoke(IpcChannel.importSession, id),
     updateItem: (input: ImportUpdateItemInput) => ipcRenderer.invoke(IpcChannel.importUpdateItem, input),
+    updateItems: (input: ImportUpdateItemsInput) => ipcRenderer.invoke(IpcChannel.importUpdateItems, input),
     validate: (input: ImportValidateInput) => ipcRenderer.invoke(IpcChannel.importValidate, input),
     commit: (sessionId: string) => ipcRenderer.invoke(IpcChannel.importCommit, sessionId),
     cancel: (sessionId: string) => ipcRenderer.invoke(IpcChannel.importCancel, sessionId),
@@ -197,6 +203,46 @@ const api: InkwellApi = {
   stat: {
     summary: () => ipcRenderer.invoke(IpcChannel.statSummary),
     setGoal: (input: StatSetGoalInput) => ipcRenderer.invoke(IpcChannel.statSetGoal, input)
+  },
+  /* ==================== M9（A1–A5） ==================== */
+  prompt: {
+    list: () => ipcRenderer.invoke(IpcChannel.promptList),
+    save: (input: PromptTemplateSaveInput) => ipcRenderer.invoke(IpcChannel.promptSave, input),
+    reset: (key: string) => ipcRenderer.invoke(IpcChannel.promptReset, key)
+  },
+  style: {
+    get: (projectId: number) => ipcRenderer.invoke(IpcChannel.styleGet, projectId),
+    generate: (input: StyleProfileGenerateInput) => ipcRenderer.invoke(IpcChannel.styleGenerate, input),
+    clear: (projectId: number) => ipcRenderer.invoke(IpcChannel.styleClear, projectId)
+  },
+  vector: {
+    status: (projectId: number) => ipcRenderer.invoke(IpcChannel.vectorStatus, projectId),
+    rebuild: (projectId: number) => ipcRenderer.invoke(IpcChannel.vectorRebuild, projectId),
+    query: (input: { projectId: number; text: string; limit?: number }) =>
+      ipcRenderer.invoke(IpcChannel.vectorQuery, input),
+    clear: (projectId: number) => ipcRenderer.invoke(IpcChannel.vectorClear, projectId)
+  },
+  update: {
+    status: () => ipcRenderer.invoke(IpcChannel.updateStatus),
+    check: () => ipcRenderer.invoke(IpcChannel.updateCheck),
+    download: () => ipcRenderer.invoke(IpcChannel.updateDownload),
+    install: () => ipcRenderer.invoke(IpcChannel.updateInstall),
+    onEvent: (listener: (event: UpdateStatus) => void) => {
+      const handler = (_event: IpcRendererEvent, payload: UpdateStatus): void => listener(payload)
+      ipcRenderer.on(IpcChannel.updateEvent, handler)
+      return () => {
+        ipcRenderer.removeListener(IpcChannel.updateEvent, handler)
+      }
+    }
+  },
+  volume: {
+    list: (projectId: number) => ipcRenderer.invoke(IpcChannel.volumeList, projectId),
+    save: (input: VolumeSaveInput) => ipcRenderer.invoke(IpcChannel.volumeSave, input),
+    remove: (id: number) => ipcRenderer.invoke(IpcChannel.volumeRemove, id)
+  },
+  revision: {
+    list: (projectId: number, chapterNo: number) =>
+      ipcRenderer.invoke(IpcChannel.revisionList, { projectId, chapterNo })
   },
   onMigrationEvent: (listener: (event: MigrationEvent) => void) => {
     const handler = (_event: IpcRendererEvent, payload: MigrationEvent): void => listener(payload)

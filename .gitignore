@@ -6,8 +6,10 @@ node_modules/
 dist/
 out/
 build/
-release/
-release_build/
+# 唯一打包输出目录（详见 electron-builder.yml 顶部说明 + scripts/clean-release.mjs）
+/release/
+# 历史遗留的第二产物目录：保留忽略规则作为防呆，避免再次分裂
+/release_build/
 dist-electron/
 *.tsbuildinfo
 .vite/

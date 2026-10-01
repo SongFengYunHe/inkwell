@@ -32,7 +32,11 @@ export interface AppConfig {
 export const DEFAULT_SETTINGS: LibrarySettings = {
   trashRetentionDays: 30,
   cleanCacheOnQuit: false,
-  autoBackup: true
+  autoBackup: true,
+  // A3：向量检索默认关闭（会消耗 embedding 额度，需用户显式开启）
+  ragSearch: false,
+  // A4：只自动「检查」更新并提示，不自动下载或安装
+  autoUpdate: true
 }
 
 /** config.json 绝对路径（userData 固定目录） */

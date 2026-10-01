@@ -10,6 +10,7 @@ import type {
   ImportSession,
   ImportStats,
   ImportUpdateItemInput,
+  ImportUpdateItemsInput,
   ImportValidateInput,
   ImportProgress,
   ParsedChapter
@@ -178,40 +179,69 @@ function persistSession(
 ): void {
   const db = getDb()
   const now = Date.now()
-  db.insert(importSession)
-    .values({
-      id,
-      projectId: projectId === null ? null : String(projectId),
-      sourcePath,
-      sourceKind,
-      parsedTree: tree,
-      validation,
-      warnings,
-      encoding,
-      createdAt: now,
-      status: 'staging'
-    })
-    .run()
-
-  if (items.length > 0) {
-    db.insert(importItem)
-      .values(
-        items.map((item) => ({
-          id: item.id,
-          sessionId: id,
-          chapterNo: item.chapterNo,
-          volumeIdx: item.volumeIdx,
-          title: item.title,
-          action: item.action,
-          enabled: item.enabled,
-          payload: item.payload,
-          diff: item.diff,
-          heuristicFields: item.heuristicFields,
-          hasDraft: item.hasDraft
-        }))
-      )
+  // 会话头 + 逐章条目必须原子写入：中途失败留下「0 条目的 staging 会话」会污染导入列表
+  db.transaction(() => {
+    db.insert(importSession)
+      .values({
+        id,
+        projectId: projectId === null ? null : String(projectId),
+        sourcePath,
+        sourceKind,
+        parsedTree: tree,
+        validation,
+        warnings,
+        encoding,
+        createdAt: now,
+        status: 'staging'
+      })
       .run()
-  }
+
+    if (items.length > 0) {
+      db.insert(importItem)
+        .values(
+          items.map((item) => ({
+            id: item.id,
+            sessionId: id,
+            chapterNo: item.chapterNo,
+            volumeIdx: item.volumeIdx,
+            title: item.title,
+            action: item.action,
+            enabled: item.enabled,
+            payload: item.payload,
+            diff: item.diff,
+            heuristicFields: item.heuristicFields,
+            hasDraft: item.hasDraft
+          }))
+        )
+        .run()
+    }
+  })
+  pruneImportSessions()
+}
+
+/**
+ * 暂存保留期：未完成的会话留 3 天；已结束（committed / cancelled）的留 24 小时。
+ * 导入会话此前只增不减，会让书库文件无限膨胀；但也不能「一提交就删」——
+ * 提交后的会话状态仍要被读取（例如「提交后状态为 committed」这类断言与刷新恢复）。
+ */
+const SESSION_STAGING_KEEP_MS = 3 * 24 * 60 * 60 * 1000
+const SESSION_FINISHED_KEEP_MS = 24 * 60 * 60 * 1000
+
+/** 清理过期的导入暂存（含逐章条目，靠外键级联） */
+export function pruneImportSessions(now = Date.now()): number {
+  const db = getDb()
+  const rows = db.select().from(importSession).all()
+  let removed = 0
+  db.transaction(() => {
+    for (const row of rows) {
+      const age = now - row.createdAt
+      const expired = row.status === 'staging' ? age > SESSION_STAGING_KEEP_MS : age > SESSION_FINISHED_KEEP_MS
+      if (!expired) continue
+      db.delete(importSession).where(eq(importSession.id, row.id)).run()
+      removed += 1
+    }
+  })
+  return removed
 }
 
 /** 从暂存表读取完整会话 */
@@ -349,6 +379,56 @@ export function updateImportItem(input: ImportUpdateItemInput): ImportSession {
   return session
 }
 
+/**
+ * 批量改多条（全选 / 全不选 / 只选新建 / 只选更新）。
+ * 逐条 IPC 在几百章时会因为每次重读整棵树而让界面「按不动」，
+ * 这里一次事务改完、只回读一次会话。
+ */
+export function updateImportItems(input: ImportUpdateItemsInput): ImportSession {
+  assertWritable()
+  const db = getDb()
+  const rows = db.select().from(importItem).where(eq(importItem.sessionId, input.sessionId)).all()
+  const byId = new Map(rows.map((row) => [row.id, row]))
+
+  db.transaction(() => {
+    for (const update of input.updates) {
+      const row = byId.get(update.itemId)
+      if (!row) continue
+      const patch: {
+        action?: ImportAction
+        enabled?: boolean
+        chapterNo?: number
+        volumeIdx?: number
+        payload?: ImportBriefPayload
+      } = {}
+      if (update.action) {
+        patch.action = update.action
+        if (update.action === 'update') patch.enabled = update.enabled ?? true
+        if (update.action === 'skip') patch.enabled = update.enabled ?? false
+      }
+      if (update.enabled !== undefined) patch.enabled = update.enabled
+      if (update.chapterNo !== undefined || update.volumeIdx !== undefined) {
+        const chapterNo = update.chapterNo ?? row.chapterNo
+        const volumeIdx = update.volumeIdx ?? row.volumeIdx
+        patch.chapterNo = chapterNo
+        patch.volumeIdx = volumeIdx
+        patch.payload = { ...row.payload, chapterNo, volumeIdx }
+      }
+      if (Object.keys(patch).length === 0) continue
+      db.update(importItem)
+        .set(patch)
+        .where(and(eq(importItem.id, update.itemId), eq(importItem.sessionId, input.sessionId)))
+        .run()
+      // 同一批里可能出现重复条目：保持内存快照同步，避免读到旧值
+      byId.set(update.itemId, { ...row, ...patch })
+    }
+  })
+
+  const session = getSession(input.sessionId)
+  if (!session) throw new Error('导入会话不存在')
+  return session
+}
+
 /** 重跑体检（不落库） */
 export function revalidateSession(input: ImportValidateInput): ImportSession {
   assertWritable()
@@ -383,12 +463,16 @@ export function commitSession(sessionId: string): { committed: number } {
       const current = existing.get(item.chapterNo)
       // 更新：先把旧细纲软删除（移入回收站），再写入新值
       if (current) deleteBrief(current.id)
-      saveBrief({ ...item.payload, projectId, chapterNo: item.chapterNo })
+      const saved = saveBrief({ ...item.payload, projectId, chapterNo: item.chapterNo })
+      // 同一会话里重复章节号时，后面的条目要看到前面刚写入的结果，
+      // 否则 existing 是过期快照，看似「更新」实为覆盖，与差异预览不符。
+      existing.set(saved.chapterNo, saved)
       committed += 1
     }
     db.update(importSession).set({ status: 'committed' }).where(eq(importSession.id, sessionId)).run()
   })
 
+  pruneImportSessions()
   return { committed }
 }
 
@@ -399,4 +483,5 @@ export function cancelSession(sessionId: string): void {
   const row = db.select().from(importSession).where(eq(importSession.id, sessionId)).get()
   if (!row) throw new Error('导入会话不存在')
   db.update(importSession).set({ status: 'cancelled' }).where(eq(importSession.id, sessionId)).run()
+  pruneImportSessions()
 }

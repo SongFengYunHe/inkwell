@@ -1,15 +1,28 @@
 import { useEffect, useState } from 'react'
 import AgentPanel from '../components/AgentPanel'
 import BackupPanel from '../components/BackupPanel'
+import PromptPanel from '../components/PromptPanel'
 import ProviderPanel from '../components/ProviderPanel'
 import RoutePanel from '../components/RoutePanel'
 import TrashPanel from '../components/TrashPanel'
+import UpdatePanel from '../components/UpdatePanel'
+import VectorPanel from '../components/VectorPanel'
 import UsagePanel from '../components/UsagePanel'
 import ThemeToggle from '../components/ThemeToggle'
 import { BUTTON_PRIMARY, INPUT_CLASS, Labeled } from '../components/ui'
 import { useAppStore } from '../stores/appStore'
 
-type SettingsTab = 'official' | 'agent' | 'proxy' | 'route' | 'usage' | 'data' | 'trash' | 'about'
+type SettingsTab =
+  | 'official'
+  | 'agent'
+  | 'proxy'
+  | 'route'
+  | 'usage'
+  | 'prompt'
+  | 'rag'
+  | 'data'
+  | 'trash'
+  | 'about'
 
 const TABS: Array<{ key: SettingsTab; label: string }> = [
   { key: 'official', label: '官方 API（BYOK）' },
@@ -17,6 +30,8 @@ const TABS: Array<{ key: SettingsTab; label: string }> = [
   { key: 'proxy', label: '自定义端点' },
   { key: 'route', label: '角色-模型路由' },
   { key: 'usage', label: '用量' },
+  { key: 'prompt', label: '提示词' },
+  { key: 'rag', label: '向量检索' },
   { key: 'data', label: '数据与备份' },
   { key: 'trash', label: '回收站' },
   { key: 'about', label: '关于' }
@@ -52,6 +67,8 @@ function AboutPanel() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
+      <UpdatePanel />
+
       <section className="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
         <h2 className="text-sm font-medium text-stone-700">隐私与后台行为</h2>
         <ul className="mt-3 space-y-3">
@@ -165,6 +182,8 @@ export default function Settings() {
         {tab === 'proxy' && <ProviderPanel kind="custom-reverse-proxy" />}
         {tab === 'route' && <RoutePanel />}
         {tab === 'usage' && <UsagePanel />}
+        {tab === 'prompt' && <PromptPanel />}
+        {tab === 'rag' && <VectorPanel />}
         {tab === 'data' && <BackupPanel />}
         {tab === 'trash' && <TrashPanel />}
         {tab === 'about' && <AboutPanel />}

@@ -1,5 +1,10 @@
 # electron-builder 打包配置（计划书 §9.3 体积瘦身）
-# 产物统一落到 release/（该目录已在 .gitignore 中忽略）
+#
+# 唯一的打包输出目录是 release/（.gitignore 已忽略；CI 也只认它）。
+# 严禁用 --config.directories.output=<其它目录> 覆盖：历史上正是这个绕行
+# 分裂出了 release_build/，导致「配置说 release、产物在 release_build」的混乱。
+# 若目录被占用（Windows 上删不掉/改不了名），请先跑 npm run clean:release，
+# 它会给出明确的占用提示，而不是让 electron-builder 中途把目录掏空。
 appId: com.inkwell.app
 productName: Inkwell
 copyright: Copyright © 2026 Inkwell
@@ -7,6 +12,13 @@ copyright: Copyright © 2026 Inkwell
 directories:
   output: release
   buildResources: build
+
+# 自动更新（A4）：打包时生成 latest.yml 与 resources/app-update.yml 供 electron-updater 使用。
+# 真正的上传在 .github/workflows/release.yml 里用 GITHUB_TOKEN 完成。
+publish:
+  - provider: github
+    owner: SongFengYunHe
+    repo: inkwell
 
 # 只打包运行时真正需要的内容：编译产物 + 包描述；生产依赖由 electron-builder 自动纳入
 files:
@@ -64,4 +76,3 @@ nsis:
   shortcutName: Inkwell
   # 不做增量包，避免依赖上一次发布产物
   differentialPackage: false
-  artifactName: ${productName}-${version}-${arch}-setup.${ext}

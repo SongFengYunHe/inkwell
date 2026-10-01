@@ -1,5 +1,5 @@
 import { inflateRawSync } from 'node:zlib'
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 
 /**
  * 极简 ZIP 读取器（零新依赖）。
@@ -8,6 +8,8 @@ import { readFileSync } from 'node:fs'
  */
 
 const SIG_LOCAL = 0x04034b50
+/** 单个条目解压后的上限（防高压缩比 zip 把主进程内存打满） */
+const MAX_ENTRY_BYTES = 64 * 1024 * 1024
 const SIG_CENTRAL = 0x02014b50
 const SIG_EOCD = 0x06054b50
 /** 最大注释长度，倒扫 EOCD 时最多回退这么多字节 */
@@ -70,11 +72,22 @@ export class ZipArchive {
     if (end > this.buffer.length) throw new Error(`ZIP 条目数据越界：${entry.name}`)
 
     const raw = this.buffer.subarray(start, end)
-    if (entry.method === 0) return Buffer.from(raw)
+    if (entry.method === 0) {
+      if (raw.length > MAX_ENTRY_BYTES) throw new Error(entryTooLarge(entry.name, raw.length))
+      return Buffer.from(raw)
+    }
     if (entry.method === 8) {
+      // 中央目录里声明的大小先拦一道；再给 inflate 加 maxOutputLength 兜底，
+      // 因为声明值本身可能是伪造 / 损坏的。
+      if (entry.uncompressedSize > MAX_ENTRY_BYTES) {
+        throw new Error(entryTooLarge(entry.name, entry.uncompressedSize))
+      }
       try {
-        return inflateRawSync(raw)
+        return inflateRawSync(raw, { maxOutputLength: MAX_ENTRY_BYTES })
       } catch (error) {
+        if (error instanceof Error && /maxOutputLength|Cannot create a Buffer larger/i.test(error.message)) {
+          throw new Error(entryTooLarge(entry.name, entry.uncompressedSize))
+        }
         throw new Error(`ZIP 解压失败（deflate）：${entry.name}｜${error instanceof Error ? error.message : String(error)}`)
       }
     }
@@ -137,12 +150,22 @@ export function openZip(buffer: Buffer): ZipArchive {
   return new ZipArchive(buffer)
 }
 
-/** 从文件路径打开 ZIP 归档 */
-export function openZipFile(filePath: string): ZipArchive {
+function entryTooLarge(name: string, bytes: number): string {
+  return `ZIP 内条目过大（${(bytes / 1024 / 1024).toFixed(1)}MB，上限 64MB）：${name}`
+}
+
+/** 从文件路径打开 ZIP 归档；maxBytes 用于在整文件读入前先挡掉超大文件 */
+export function openZipFile(filePath: string, maxBytes = MAX_ENTRY_BYTES): ZipArchive {
   let buffer: Buffer
   try {
+    // docx / epub 走的是整文件读入，必须先按大小拦截（文本路径有独立的 50MB 校验）。
+    const size = statSync(filePath).size
+    if (size > maxBytes) {
+      throw new Error(`文件过大（${(size / 1024 / 1024).toFixed(1)}MB），暂不支持导入（上限 ${Math.round(maxBytes / 1024 / 1024)}MB）`)
+    }
     buffer = readFileSync(filePath)
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith('文件过大')) throw error
     throw new Error(`无法读取文件：${filePath}｜${error instanceof Error ? error.message : String(error)}`)
   }
   return new ZipArchive(buffer)

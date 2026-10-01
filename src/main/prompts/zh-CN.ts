@@ -1,5 +1,6 @@
 import type { GenerationMode } from '@shared/types'
 import type { ChatMessage } from '../providers/types'
+import { resolvePrompt } from './registry'
 
 /** 单章生成所需的全部上下文（由 generate.ts 从数据库装配） */
 export interface ChapterPromptContext {
@@ -30,20 +31,15 @@ export interface ChapterPromptContext {
   activeHooks: string
   /** 真相文件 4：滚动的前情摘要链 */
   recentSummaries: string
+  /** A2：文风仿写画像（人类可读段落；空串表示未启用） */
+  styleProfile: string
+  /** A3：向量检索召回的「相关回忆」（空串表示未启用 / 无命中） */
+  recalledMemories: string
   targetWords: number
 }
 
 const NO_MARKDOWN =
   '只输出章节正文本身：不要写章节标题、不要写任何解释或说明、不要使用 Markdown 标记（如 #、**、-）。'
-
-const SYSTEM_WRITER = [
-  '你是一位深耕中文网络文学多年的职业作家，擅长长篇连载。',
-  '你的文字画面感强、节奏稳、对话自然，善于用具体细节推进剧情。',
-  '你严格遵循给定的世界观、人物设定与大纲，绝不发明与之冲突的设定。'
-].join('\n')
-
-const SYSTEM_EDITOR =
-  '你是一位资深中文小说编辑，擅长在不改动情节与信息量的前提下，提升文字的准确度、节奏与感染力。'
 
 function row(label: string, value: string): string {
   const trimmed = value.trim()
@@ -93,6 +89,18 @@ function previousSection(c: ChapterPromptContext): string {
   return excerpt ? `【前情提要（上一章结尾）】\n${excerpt}` : ''
 }
 
+/** A2：文风画像段落（仿写画像一旦生成，就是「必须遵守」的硬约束） */
+function styleSection(c: ChapterPromptContext): string {
+  const profile = c.styleProfile.trim()
+  return profile ? `【文风画像（必须遵守）】\n${profile}` : ''
+}
+
+/** A3：向量检索召回的过往片段（按相似度排序的相关回忆） */
+function recallSection(c: ChapterPromptContext): string {
+  const recalled = c.recalledMemories.trim()
+  return recalled ? `【相关回忆（按相似度从既有章节检索，供保持细节一致）】\n${recalled}` : ''
+}
+
 /** 真相文件段落：角色当前状态 / 活跃伏笔 / 前情摘要链（长篇一致性的依据） */
 function memorySection(c: ChapterPromptContext): string {
   const rows: string[] = []
@@ -103,7 +111,15 @@ function memorySection(c: ChapterPromptContext): string {
 }
 
 function baseSections(c: ChapterPromptContext): string[] {
-  return [projectSection(c), outlineSection(c), briefSection(c), memorySection(c), previousSection(c)].filter(Boolean)
+  return [
+    styleSection(c),
+    projectSection(c),
+    outlineSection(c),
+    briefSection(c),
+    memorySection(c),
+    recallSection(c),
+    previousSection(c)
+  ].filter(Boolean)
 }
 
 function wrap(system: string, sections: string[]): ChatMessage[] {
@@ -127,70 +143,53 @@ export function buildMessagesFor(mode: GenerationMode, context: ChapterPromptCon
 }
 
 function buildDraft(c: ChapterPromptContext): ChatMessage[] {
-  return wrap(SYSTEM_WRITER, [
-    ...baseSections(c),
-    [
-      '【写作要求】',
-      `- 写出第${c.chapterNo}章完整正文，约 ${c.targetWords} 字（允许 ±20% 浮动）`,
-      '- 落到具体场景与人物动作，避免空洞概述与总结式叙述',
-      '- 章末扣住「悬念钩子」，留下继续读下去的动力',
-      `- ${NO_MARKDOWN}`
-    ].join('\n')
-  ])
+  const tpl = resolvePrompt('chapter.draft', {
+    chapterNo: c.chapterNo,
+    targetWords: c.targetWords,
+    noMarkdown: NO_MARKDOWN
+  })
+  return wrap(tpl.system, [...baseSections(c), tpl.instruction])
 }
 
 function buildContinue(c: ChapterPromptContext): ChatMessage[] {
-  return wrap(SYSTEM_WRITER, [
+  const tpl = resolvePrompt('chapter.continue', {
+    chapterNo: c.chapterNo,
+    targetWords: c.targetWords,
+    noMarkdown: NO_MARKDOWN
+  })
+  return wrap(tpl.system, [
     ...baseSections(c),
     `【已写正文（需无缝衔接，不要重复输出）】\n${c.existingContent.trim()}`,
-    [
-      '【写作要求】',
-      `- 承接上文继续写下去，新写约 ${c.targetWords} 字`,
-      '- 人称、时态、语气、称谓必须与上文完全一致',
-      '- 只输出新续写的正文，绝不要重复已有内容，也不要重复开头',
-      `- ${NO_MARKDOWN}`
-    ].join('\n')
+    tpl.instruction
   ])
 }
 
 function buildRewrite(c: ChapterPromptContext): ChatMessage[] {
+  const tpl = resolvePrompt('chapter.rewrite', {
+    chapterNo: c.chapterNo,
+    targetWords: c.targetWords,
+    noMarkdown: NO_MARKDOWN
+  })
   const existing = c.existingContent.trim()
-  return wrap(SYSTEM_WRITER, [
+  return wrap(tpl.system, [
     ...baseSections(c),
     existing ? `【当前正文（可参考，允许完全重写）】\n${existing}` : '',
-    [
-      '【写作要求】',
-      `- 按上面的细纲重新撰写第${c.chapterNo}章完整正文，约 ${c.targetWords} 字`,
-      '- 情节走向与设定必须与当前版本一致，但叙事视角、场景调度与细节描写要明显提升',
-      `- ${NO_MARKDOWN}`
-    ].join('\n')
+    tpl.instruction
   ])
 }
 
 function buildPolish(c: ChapterPromptContext): ChatMessage[] {
-  return wrap(SYSTEM_EDITOR, [
+  const tpl = resolvePrompt('chapter.polish', { chapterNo: c.chapterNo, noMarkdown: NO_MARKDOWN })
+  return wrap(tpl.system, [
+    styleSection(c),
     projectSection(c),
     outlineSection(c),
     `【待润色正文 · 第${c.chapterNo}章】\n${c.existingContent.trim()}`,
-    [
-      '【润色要求】',
-      '- 情节、人物、对话内容与信息量保持不变，只改善文字表达',
-      '- 消除 AI 腔：减少空洞排比、套话与重复用词，让句子更有呼吸感',
-      '- 输出润色后的完整正文，不要输出任何修改说明',
-      `- ${NO_MARKDOWN}`
-    ].join('\n')
+    tpl.instruction
   ])
 }
 
 /* ------------------------------ 向导 / 细纲辅助 ------------------------------ */
-
-const SYSTEM_PLANNER = [
-  '你是一位资深中文网络小说策划，擅长把一句话灵感扩展成可连载的长篇设定与总大纲，',
-  '并把总大纲拆成节奏合理、环环相扣的逐章细纲。',
-  '你只输出 JSON，绝不输出任何解释性文字。'
-].join('\n')
-
-const JSON_ONLY = '只输出 JSON 本身：不要 Markdown 代码块，不要前后缀解释，不要注释。'
 
 export interface OutlinePromptInput {
   bookTitle: string
@@ -200,37 +199,18 @@ export interface OutlinePromptInput {
   premise: string
 }
 
-/** 一句话灵感 → 设定 + 总大纲 */
+/** 一句话灵感 → 设定 + 总大纲（模板键 outline.generate） */
 export function buildOutlineMessages(input: OutlinePromptInput): ChatMessage[] {
+  const tpl = resolvePrompt('outline.generate', {
+    bookTitle: input.bookTitle,
+    genre: input.genre,
+    totalChapters: input.totalChapters,
+    wordsPerChapter: input.wordsPerChapter,
+    premise: input.premise
+  })
   return [
-    { role: 'system', content: SYSTEM_PLANNER },
-    {
-      role: 'user',
-      content: [
-        '【任务】把下面的一句话灵感扩展为一部长篇小说的设定与总大纲。',
-        [
-          row('书名', input.bookTitle),
-          row('题材', input.genre),
-          row('预计章数', String(input.totalChapters)),
-          row('单章目标字数', String(input.wordsPerChapter)),
-          row('一句话灵感', input.premise)
-        ]
-          .filter(Boolean)
-          .join('\n'),
-        [
-          '【输出格式】输出一个 JSON 对象，字段如下：',
-          '{',
-          '  "premise": "故事前提，200 字以内，交代主角处境与核心冲突",',
-          '  "worldbuilding": "世界观设定，300 字以内",',
-          '  "protagonist": "主角档案，200 字以内（身份、性格、目标、弱点）",',
-          '  "goldenFinger": "金手指或核心设定，150 字以内",',
-          '  "style": "推荐文风，一句话",',
-          '  "coreOutline": "总大纲，按卷划分，给出主线推进与关键转折，600-1200 字"',
-          '}',
-          JSON_ONLY
-        ].join('\n')
-      ].join('\n\n')
-    }
+    { role: 'system', content: tpl.system },
+    { role: 'user', content: tpl.instruction }
   ]
 }
 
@@ -249,7 +229,7 @@ export interface BriefBatchPromptInput {
   previousTitles: Array<{ chapterNo: number; title: string }>
 }
 
-/** 总大纲 → 指定区间逐章细纲 */
+/** 总大纲 → 指定区间逐章细纲（模板键 brief.batch + 数据段） */
 export function buildBriefBatchMessages(input: BriefBatchPromptInput): ChatMessage[] {
   const count = input.toChapter - input.fromChapter + 1
   const previous = input.previousTitles.length
@@ -258,8 +238,16 @@ export function buildBriefBatchMessages(input: BriefBatchPromptInput): ChatMessa
         .join('\n')}`
     : ''
 
+  const tpl = resolvePrompt('brief.batch', {
+    fromChapter: input.fromChapter,
+    toChapter: input.toChapter,
+    count,
+    bookTitle: input.bookTitle,
+    genre: input.genre
+  })
+
   return [
-    { role: 'system', content: SYSTEM_PLANNER },
+    { role: 'system', content: tpl.system },
     {
       role: 'user',
       content: [
@@ -277,24 +265,7 @@ export function buildBriefBatchMessages(input: BriefBatchPromptInput): ChatMessa
           .join('\n'),
         input.coreOutline.trim() ? `【总大纲】\n${input.coreOutline.trim()}` : '',
         previous,
-        [
-          '【输出格式】输出一个 JSON 数组，共 ' + count + ' 项，chapterNo 依次为 ' +
-            `${input.fromChapter} 到 ${input.toChapter}：`,
-          '[',
-          '  {',
-          '    "chapterNo": ' + input.fromChapter + ',',
-          '    "title": "章节标题，12 字以内",',
-          '    "purpose": "本章目的，60 字以内",',
-          '    "keyEvents": "关键事件，120 字以内",',
-          '    "characters": ["出场角色", "..."],',
-          '    "sceneBeats": ["场景节拍", "..."],',
-          '    "suspenseHook": "章末悬念钩子，40 字以内"',
-          '  }',
-          ']',
-          '- characters 给 2-5 个；sceneBeats 给 3-6 个，每个 30 字以内',
-          '- 章节之间要有明确的推进关系，避免重复与原地打转',
-          JSON_ONLY
-        ].join('\n')
+        tpl.instruction
       ]
         .filter(Boolean)
         .join('\n\n')
@@ -317,7 +288,7 @@ export interface BriefExpandPromptInput {
   }
 }
 
-/** 单章细纲补全 / 强化 */
+/** 单章细纲补全 / 强化（模板键 brief.expand + 数据段） */
 export function buildBriefExpandMessages(input: BriefExpandPromptInput): ChatMessage[] {
   const current = [
     row('标题', input.current.title),
@@ -332,8 +303,10 @@ export function buildBriefExpandMessages(input: BriefExpandPromptInput): ChatMes
     .filter(Boolean)
     .join('\n')
 
+  const tpl = resolvePrompt('brief.expand', { chapterNo: input.chapterNo })
+
   return [
-    { role: 'system', content: SYSTEM_PLANNER },
+    { role: 'system', content: tpl.system },
     {
       role: 'user',
       content: [
@@ -341,21 +314,7 @@ export function buildBriefExpandMessages(input: BriefExpandPromptInput): ChatMes
         [row('书名', input.bookTitle), row('题材', input.genre)].filter(Boolean).join('\n'),
         input.coreOutline.trim() ? `【总大纲】\n${input.coreOutline.trim()}` : '',
         `【当前细纲（可能不完整）】\n${current || '（尚未填写）'}`,
-        [
-          '【输出格式】输出一个 JSON 对象：',
-          '{',
-          `  "chapterNo": ${input.chapterNo},`,
-          '  "title": "章节标题，12 字以内",',
-          '  "purpose": "本章目的，60 字以内",',
-          '  "keyEvents": "关键事件，120 字以内",',
-          '  "characters": ["出场角色"],',
-          '  "sceneBeats": ["场景节拍"],',
-          '  "suspenseHook": "章末悬念钩子"',
-          '}',
-          '- 保留当前细纲中合理的内容，补齐缺失项，并让情节更具体可写',
-          '- characters 给 2-5 个；sceneBeats 给 3-6 个，每个 30 字以内',
-          JSON_ONLY
-        ].join('\n')
+        tpl.instruction
       ]
         .filter(Boolean)
         .join('\n\n')
@@ -364,19 +323,6 @@ export function buildBriefExpandMessages(input: BriefExpandPromptInput): ChatMes
 }
 
 /* ============================ M3：审计与记忆回写 ============================ */
-
-const SYSTEM_REVIEWER = [
-  '你是一位极其严格的中文小说连续性审稿人，熟悉长篇连载的设定管理。',
-  '你只依据给定的资料判断，不臆测未给出的信息；对没有把握的问题宁可放过。',
-  '你只输出 JSON，绝不输出任何解释性文字。'
-].join('\n')
-
-const SYSTEM_EXTRACTOR = [
-  '你是一位负责维护长篇小说"真相文件"的记忆管理员。',
-  '你从本章正文中抽取可长期复用的事实：章节摘要、角色当前状态、世界状态增量、伏笔进展。',
-  '你只记录正文中明确写出的事实，不推测、不补充。',
-  '你只输出 JSON，绝不输出任何解释性文字。'
-].join('\n')
 
 export interface AuditPromptInput {
   bookTitle: string
@@ -396,10 +342,15 @@ export interface AuditPromptInput {
   content: string
 }
 
-/** 一致性审计（结构化 JSON，计划书 §12 `audit.consistency`） */
+/** 一致性审计（模板键 audit.consistency + 数据段） */
 export function buildAuditMessages(input: AuditPromptInput): ChatMessage[] {
+  const tpl = resolvePrompt('audit.consistency', {
+    bookTitle: input.bookTitle,
+    genre: input.genre,
+    chapterNo: input.chapterNo
+  })
   return [
-    { role: 'system', content: SYSTEM_REVIEWER },
+    { role: 'system', content: tpl.system },
     {
       role: 'user',
       content: [
@@ -414,24 +365,7 @@ export function buildAuditMessages(input: AuditPromptInput): ChatMessage[] {
         input.pendingHooks.trim() ? `【待处理伏笔池】\n${input.pendingHooks.trim()}` : '',
         input.previousSummary.trim() ? `【前一章摘要】\n${input.previousSummary.trim()}` : '',
         `【本章正文】\n${input.content.trim()}`,
-        [
-          '【审计维度】仅检查以下语义维度：',
-          '- OOC 出戏：角色言行与其性格 / 动机明显冲突',
-          '- 设定冲突：与世界观、角色能力或既有事实矛盾',
-          '- 时间线矛盾：时间推进前后不一致',
-          '- 伏笔断线：应回收的伏笔被无视或写反',
-          '- 称谓不一致：同一角色 / 事物被写成不同名字',
-          '【输出格式】输出一个 JSON 对象：',
-          '{',
-          '  "issues": [',
-          '    { "dimension": "OOC 出戏", "severity": "error", "detail": "问题描述", "evidence": "原文片段" }',
-          '  ]',
-          '}',
-          '- severity 取 info / warn / error；没有问题时 issues 返回空数组',
-          '- 每条 evidence 必须是正文中的原句片段，不得超过 40 字',
-          '- 宁缺毋滥：只报你有充分把握的矛盾',
-          JSON_ONLY
-        ].join('\n')
+        tpl.instruction
       ]
         .filter(Boolean)
         .join('\n\n')
@@ -454,10 +388,11 @@ export interface MemoryPromptInput {
   content: string
 }
 
-/** 章节摘要 + 状态抽取（计划书 §12 `memory.summarize` / `memory.extract_state`） */
+/** 章节摘要 + 状态抽取（模板键 memory.summarize + 数据段） */
 export function buildMemoryMessages(input: MemoryPromptInput): ChatMessage[] {
+  const tpl = resolvePrompt('memory.summarize', { chapterNo: input.chapterNo })
   return [
-    { role: 'system', content: SYSTEM_EXTRACTOR },
+    { role: 'system', content: tpl.system },
     {
       role: 'user',
       content: [
@@ -470,30 +405,7 @@ export function buildMemoryMessages(input: MemoryPromptInput): ChatMessage[] {
         input.characterStates.trim() ? `【既有角色状态（用于增量更新）】\n${input.characterStates.trim()}` : '',
         input.pendingHooks.trim() ? `【既有待处理伏笔】\n${input.pendingHooks.trim()}` : '',
         `【本章正文】\n${input.content.trim()}`,
-        [
-          '【输出格式】输出一个 JSON 对象：',
-          '{',
-          '  "summary": "本章摘要，150 字以内，按发生顺序陈述关键事件与结果",',
-          '  "characterStates": [',
-          '    { "name": "角色名", "state": "身心/处境状态", "location": "当前所在地",',
-          '      "power": "能力或战力变化", "items": ["持有道具"], "recent": "最近行为，30 字以内" }',
-          '  ],',
-          '  "continuityFacts": {',
-          '    "worldState": "世界/局势当前状态的增量，80 字以内",',
-          '    "timeline": "本章发生的时间点或与上章的时间间隔，40 字以内",',
-          '    "resourceLedger": "资源/道具/数值的增减，60 字以内",',
-          '    "facts": ["本章新增的、后续必须遵守的硬事实，每条 30 字以内"]',
-          '  },',
-          '  "threadUpdates": [',
-          '    { "title": "伏笔或支线名称", "type": "plot|subplot|hook",',
-          '      "event": "planted|progressing|resolved|abandoned", "evidence": "依据，30 字以内" }',
-          '  ]',
-          '}',
-          '- characterStates 至少覆盖本章所有出场角色',
-          '- threadUpdates 记录本章埋下或推进的伏笔；没有则返回空数组',
-          '- 所有内容必须来自正文，不得虚构',
-          JSON_ONLY
-        ].join('\n')
+        tpl.instruction
       ]
         .filter(Boolean)
         .join('\n\n')
@@ -503,13 +415,6 @@ export function buildMemoryMessages(input: MemoryPromptInput): ChatMessage[] {
 
 /* ============================ M7：导入解析兜底 ============================ */
 
-const SYSTEM_IMPORT_PARSER = [
-  '你是一位中文小说大纲结构整理员。',
-  '你从一段「未标注」的章节大纲文本中，识别出本章目的、关键事件、出场角色、场景节拍与悬念钩子。',
-  '只依据给定文本，不虚构原文没有的信息；某项在文本中确实没有就留空。',
-  '你只输出 JSON，绝不输出任何解释性文字。'
-].join('\n')
-
 export interface ImportExtractPromptInput {
   bookTitle?: string
   chapterNo: number
@@ -518,10 +423,11 @@ export interface ImportExtractPromptInput {
   rawText: string
 }
 
-/** 导入解析兜底（计划书 §4.3 ⑥ `import.extract_brief`，默认关闭） */
+/** 导入解析兜底（模板键 import.extract_brief，默认关闭） */
 export function buildImportExtractMessages(input: ImportExtractPromptInput): ChatMessage[] {
+  const tpl = resolvePrompt('import.extract_brief', { chapterNo: input.chapterNo })
   return [
-    { role: 'system', content: SYSTEM_IMPORT_PARSER },
+    { role: 'system', content: tpl.system },
     {
       role: 'user',
       content: [
@@ -530,19 +436,10 @@ export function buildImportExtractMessages(input: ImportExtractPromptInput): Cha
           .filter(Boolean)
           .join('\n'),
         `【待整理文本】\n${input.rawText.trim()}`,
-        [
-          '【输出格式】输出一个 JSON 对象：',
-          '{',
-          '  "purpose": "本章目的，60 字以内",',
-          '  "keyEvents": "关键事件，120 字以内",',
-          '  "characters": ["出场角色"],',
-          '  "sceneBeats": ["场景节拍"],',
-          '  "suspenseHook": "章末悬念钩子，40 字以内"',
-          '}',
-          '- 文本中没有的信息留空字符串 / 空数组，不要编造',
-          JSON_ONLY
-        ].join('\n')
-      ].join('\n\n')
+        tpl.instruction
+      ]
+        .filter(Boolean)
+        .join('\n\n')
     }
   ]
 }
@@ -557,7 +454,7 @@ export interface FixPromptInput {
   issues: Array<{ dimension: string; detail: string; evidence?: string; paragraph?: number }>
 }
 
-/** 定点修复（计划书 §7.1 步骤 4 / §12 `fix.spot`）：只改问题句段，不整章重写 */
+/** 定点修复（模板键 fix.spot + 数据段）：只改问题句段，不整章重写 */
 export function buildFixMessages(input: FixPromptInput): ChatMessage[] {
   const issueLines = input.issues
     .map((issue, index) => {
@@ -567,8 +464,10 @@ export function buildFixMessages(input: FixPromptInput): ChatMessage[] {
     })
     .join('\n')
 
+  const tpl = resolvePrompt('fix.spot', { chapterNo: input.chapterNo, noMarkdown: NO_MARKDOWN })
+
   return [
-    { role: 'system', content: SYSTEM_EDITOR },
+    { role: 'system', content: tpl.system },
     {
       role: 'user',
       content: [
@@ -578,14 +477,32 @@ export function buildFixMessages(input: FixPromptInput): ChatMessage[] {
           .join('\n'),
         `【待修复问题】\n${issueLines || '（无）'}`,
         `【本章正文】\n${input.content.trim()}`,
-        [
-          '【修复要求】',
-          '- 只修改与上述问题相关的句子或段落，情节、信息量、人物与对话内容保持不变',
-          '- 不得整章重写、不得删减情节、不得新增设定',
-          '- 保持原有分段与叙事视角',
-          `- 输出修复后的完整正文；不要输出任何说明或差异标记；${NO_MARKDOWN}`
-        ].join('\n')
+        tpl.instruction
       ].join('\n\n')
+    }
+  ]
+}
+
+/* ============================ A2：文风仿写画像 ============================ */
+
+export interface StyleProfilePromptInput {
+  bookTitle: string
+  genre: string
+  sample: string
+}
+
+/** 参考文本 → 结构化文风画像（模板键 style.profile） */
+export function buildStyleProfileMessages(input: StyleProfilePromptInput): ChatMessage[] {
+  const tpl = resolvePrompt('style.profile', {
+    bookTitle: input.bookTitle,
+    genre: input.genre,
+    sampleChars: input.sample.length
+  })
+  return [
+    { role: 'system', content: tpl.system },
+    {
+      role: 'user',
+      content: [tpl.instruction, `【参考文本】\n${input.sample.trim()}`].join('\n\n')
     }
   ]
 }

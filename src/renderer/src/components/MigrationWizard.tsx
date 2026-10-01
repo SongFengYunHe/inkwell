@@ -34,8 +34,14 @@ export default function MigrationWizard() {
   }, [])
 
   const pickTarget = async (): Promise<void> => {
-    const picked = await window.inkwell.app.pickFolder()
-    if (picked) setTarget(picked)
+    setError('')
+    try {
+      const picked = await window.inkwell.app.pickFolder()
+      if (picked) setTarget(picked)
+    } catch (err) {
+      // 选目录失败必须说出来：否则输入框仍是旧路径，用户以为选好了直接迁移到错目录
+      setError(`选择目录失败：${err instanceof Error ? err.message : String(err)}`)
+    }
   }
 
   const runPrecheck = async (): Promise<void> => {

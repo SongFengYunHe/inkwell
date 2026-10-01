@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Bookshelf from './pages/Bookshelf'
 import ImportReview from './pages/ImportReview'
 import LibraryManager from './pages/LibraryManager'
@@ -89,22 +89,23 @@ export default function App() {
     return () => window.clearTimeout(timer)
   }, [undo, dismissUndo])
 
-  /** 拖拽落点路由：逐个文件交给 store 分流，汇总成败供重试 */
-  const handleDropPaths = async (
-    paths: string[],
-    target: string
-  ): Promise<Array<{ path: string; ok: boolean }>> => {
-    const results: Array<{ path: string; ok: boolean }> = []
-    for (const path of paths) {
-      try {
-        await dropImport(path, target)
-        results.push({ path, ok: true })
-      } catch {
-        results.push({ path, ok: false })
+/** 拖拽落点路由：逐个文件交给 store 分流，汇总成败供重试（useCallback 稳定引用，
+   *  否则每次渲染都会让 DropZone 的 window 监听器摘挂一次，拖拽中途可能失效） */
+  const handleDropPaths = useCallback(
+    async (paths: string[], target: string): Promise<Array<{ path: string; ok: boolean }>> => {
+      const results: Array<{ path: string; ok: boolean }> = []
+      for (const path of paths) {
+        try {
+          await dropImport(path, target)
+          results.push({ path, ok: true })
+        } catch {
+          results.push({ path, ok: false })
+        }
       }
-    }
-    return results
-  }
+      return results
+    },
+    [dropImport]
+  )
 
   const page =
     view === 'settings' ? (

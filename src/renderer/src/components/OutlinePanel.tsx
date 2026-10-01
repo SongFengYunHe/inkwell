@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useAppStore } from '../stores/appStore'
+import StylePanel from './StylePanel'
+import VolumePanel from './VolumePanel'
 import { BUTTON_GHOST, BUTTON_PRIMARY, INPUT_CLASS, Labeled } from './ui'
 
 interface OutlineForm {
@@ -154,6 +156,14 @@ export default function OutlinePanel() {
           {wizard ? 'AI 生成中…' : 'AI 生成设定与大纲'}
         </button>
         <span className="text-xs text-stone-400">按总大纲自动补齐所有章节细纲</span>
+      </div>
+
+      <div className="md:col-span-2 mt-2 border-t border-stone-200 pt-5">
+        <StylePanel projectId={project.id} />
+      </div>
+
+      <div className="md:col-span-2 border-t border-stone-200 pt-5">
+        <VolumePanel projectId={project.id} />
       </div>
     </form>
   )
