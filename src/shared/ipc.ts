@@ -13,6 +13,8 @@ export const IpcChannel = {
   briefRemove: 'brief:remove',
   briefExpand: 'brief:expand',
   draftList: 'draft:list',
+  /** R10：按章按需拉取正文 */
+  draftContent: 'draft:content',
   draftSave: 'draft:save',
   draftRemove: 'draft:remove',
   draftAudit: 'draft:audit',
@@ -129,7 +131,23 @@ export const IpcChannel = {
   volumeList: 'volume:list',
   volumeSave: 'volume:save',
   volumeRemove: 'volume:remove',
-  revisionList: 'revision:list'
+  revisionList: 'revision:list',
+  /** M10：质量闭环 */
+  styleAudit: 'style:audit',
+  styleScore: 'style:score',
+  auditConfig: 'audit:config',
+  auditSaveConfig: 'audit:save-config',
+  auditDimensions: 'audit:dimensions',
+  revisionRevert: 'revision:revert',
+  /** R12：角色卡编辑 */
+  characterList: 'character:list',
+  characterSave: 'character:save',
+  characterRemove: 'character:remove',
+  /** M11：题材包 */
+  packExport: 'pack:export',
+  packImport: 'pack:import',
+  /** R1：取消迁移 */
+  libraryCancelMigrate: 'library:cancel-migrate'
 } as const
 
 export type IpcChannelName = (typeof IpcChannel)[keyof typeof IpcChannel]
@@ -177,6 +195,13 @@ export const briefSaveSchema = z.object({
   suspenseHook: z.string().max(2_000).optional(),
   userGuidance: z.string().max(4_000).optional(),
   notes: z.string().max(4_000).optional()
+})
+
+/** R10：按章取正文（version 缺省为最新版） */
+export const draftContentSchema = z.object({
+  projectId: projectIdSchema,
+  chapterNo: z.number().int().min(1).max(99_999),
+  version: z.number().int().min(1).max(9_999).optional()
 })
 
 export const draftSaveSchema = z.object({
@@ -276,7 +301,7 @@ export const fixChapterSchema = chapterQuerySchema.extend({
 
 export const exportSchema = z.object({
   projectId: projectIdSchema,
-  formats: z.array(z.enum(['txt', 'md', 'docx', 'epub'])).min(1).max(4),
+  formats: z.array(z.enum(['txt', 'md', 'docx', 'epub', 'pdf'])).min(1).max(5),
   outDir: z.string().max(1_000).optional()
 })
 
@@ -424,6 +449,60 @@ export const volumeSaveSchema = z.object({
 export const volumeRemoveSchema = idSchema
 
 export const revisionQuerySchema = chapterQuerySchema
+
+/* ============================ M10：质量闭环 ============================ */
+
+export const styleAuditSchema = chapterQuerySchema.extend({
+  useModel: z.boolean().optional()
+})
+
+export const auditConfigSaveSchema = z.object({
+  disabledDimensions: z.array(z.string().max(120)).max(80).optional(),
+  minSeverity: z.enum(['info', 'warn', 'error']).optional(),
+  countWarnAsFail: z.boolean().optional()
+})
+
+export const revisionRevertSchema = chapterQuerySchema.extend({
+  revisionId: idSchema
+})
+
+/* ============================ R12：角色卡 ============================ */
+
+export const characterSaveSchema = z.object({
+  id: idSchema.optional(),
+  projectId: projectIdSchema,
+  name: z.string().trim().min(1, '角色名不能为空').max(80),
+  role: z.string().max(60).optional(),
+  appearance: z.string().max(4_000).optional(),
+  personality: z.string().max(4_000).optional(),
+  background: z.string().max(8_000).optional(),
+  abilities: z.string().max(4_000).optional(),
+  motivation: z.string().max(4_000).optional(),
+  relationships: z.string().max(8_000).optional(),
+  csLocation: z.string().max(500).optional(),
+  csPower: z.string().max(1_000).optional(),
+  csState: z.string().max(1_000).optional(),
+  csItems: z.array(z.string().max(120)).max(100).optional(),
+  csRecent: z.string().max(1_000).optional()
+})
+
+/* ============================ M11：题材包 ============================ */
+
+export const packExportSchema = z.object({
+  name: z.string().trim().min(1, '包名不能为空').max(80),
+  description: z.string().max(500).optional(),
+  includePrompts: z.boolean().optional(),
+  genres: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(60),
+        chapters: z.number().int().min(1).max(10_000),
+        style: z.string().max(500)
+      })
+    )
+    .max(200)
+    .optional()
+})
 
 export const statSetGoalSchema = z
   .object({

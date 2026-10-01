@@ -1,28 +1,12 @@
-import Database from 'better-sqlite3'
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { utilityProcess, type UtilityProcess } from 'electron'
 import type { MigrationProgress, MigrationResult } from '@shared/types'
 import { getLibraryJsonPath, readConfig, updateConfig } from './config'
-import { closeDatabase, readSchemaVersion } from '../db/client'
+import { closeDatabase } from '../db/client'
 import { computeDirSize, precheckLibraryPath } from './precheck'
+import { AUX_DIRS, runHeavyMigration } from './migrate-heavy'
 import { getActiveEntry, isUserDataPath, libraryDbPath, openLibrary } from './registry'
-
-/** 迁移前后做行数校验的表（覆盖主链与记忆投影） */
-const VERIFY_TABLES = [
-  'project',
-  'chapter_brief',
-  'chapter_draft',
-  'memory_chapter',
-  'character',
-  'outline_thread',
-  'thread_event',
-  'review',
-  'pipeline_run',
-  'provider',
-  'llm_call'
-]
-
-const AUX_DIRS = ['backups', 'exports', 'covers']
 
 export interface MigrateOptions {
   onProgress?: (progress: MigrationProgress) => void
@@ -30,8 +14,24 @@ export interface MigrateOptions {
   signal?: AbortSignal
 }
 
-function escapeSql(value: string): string {
-  return value.replace(/'/g, "''")
+/** 正在进行的迁移（供「取消迁移」使用） */
+let activeMigration: { controller: AbortController; child: UtilityProcess | null } | null = null
+
+/** R1：取消正在进行的迁移。杀掉子进程即可——指针从未被改过，目标半成品由回滚清理。 */
+export function cancelActiveMigration(): { ok: boolean } {
+  if (!activeMigration) return { ok: false }
+  const { controller, child } = activeMigration
+  try {
+    controller.abort()
+  } catch {
+    // 忽略
+  }
+  try {
+    child?.kill()
+  } catch {
+    // 忽略
+  }
+  return { ok: true }
 }
 
 function assertNotAborted(signal?: AbortSignal): void {
@@ -39,11 +39,114 @@ function assertNotAborted(signal?: AbortSignal): void {
 }
 
 /**
- * 引导式迁移：把当前活动书库搬到 targetPath。
- * 关键点：VACUUM INTO 做一致快照（WAL 会被合并），校验通过后才原子切换指针。
- * 任一步失败即删除目标半成品并保持原指针不变（可回滚、可中断）。
+ * 在 utilityProcess 里跑重活；拿不到子进程入口时返回 false，由调用方走 inline 兜底。
  */
-export function migrateActiveLibraryTo(targetPath: string, options: MigrateOptions = {}): MigrationResult {
+function runHeavyInWorker(ctx: {
+  sourceDb: string
+  sourceRoot: string
+  target: string
+  signal?: AbortSignal
+  report: (phase: MigrationProgress['phase'], message: string, percent: number) => void
+}): Promise<boolean> {
+  const workerPath = join(__dirname, 'migrate-worker.js')
+  if (!existsSync(workerPath)) return Promise.resolve(false)
+
+  let child: UtilityProcess
+  try {
+    child = utilityProcess.fork(workerPath, [], { serviceName: 'inkwell-migrate' })
+  } catch {
+    return Promise.resolve(false)
+  }
+
+  const controller = new AbortController()
+  activeMigration = { controller, child }
+
+  return new Promise<boolean>((resolve, reject) => {
+    let settled = false
+    const cleanup = (): void => {
+      activeMigration = null
+      try {
+        child.kill()
+      } catch {
+        // 已经退出
+      }
+    }
+    const settle = (outcome: boolean | Error): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      if (outcome instanceof Error) reject(outcome)
+      else resolve(outcome)
+    }
+
+    child.on('message', (message: unknown) => {
+      const payload = message as { type?: string; phase?: string; message?: string; percent?: number }
+      if (payload?.type === 'progress') {
+        ctx.report(
+          (payload.phase ?? 'copy') as MigrationProgress['phase'],
+          payload.message ?? '',
+          payload.percent ?? 0
+        )
+        return
+      }
+      if (payload?.type === 'done') {
+        settle(true)
+        return
+      }
+      if (payload?.type === 'error') {
+        settle(new Error(payload.message || '迁移子进程报错'))
+      }
+    })
+
+    child.on('exit', (code: number) => {
+      if (settled) return
+      // 取消时 controller 已 abort：给出「已取消」而不是晦涩的退出码
+      settle(controller.signal.aborted ? new Error('迁移已取消') : new Error('迁移子进程异常退出（code=' + code + '）'))
+    })
+
+    if (ctx.signal) {
+      if (ctx.signal.aborted) {
+        settle(new Error('迁移已取消'))
+        return
+      }
+      ctx.signal.addEventListener(
+        'abort',
+        () => {
+          controller.abort()
+          try {
+            child.kill()
+          } catch {
+            // 已退出
+          }
+        },
+        { once: true }
+      )
+    }
+
+    try {
+      child.postMessage({
+        type: 'start',
+        sourceDb: ctx.sourceDb,
+        sourceRoot: ctx.sourceRoot,
+        target: ctx.target
+      })
+    } catch (error) {
+      settle(error instanceof Error ? error : new Error(String(error)))
+    }
+  })
+}
+
+/**
+ * 引导式迁移：把当前活动书库搬到 targetPath。
+ *
+ * R1 起重活（VACUUM INTO / 复制附属目录 / 校验）默认跑在 utilityProcess 子进程里，
+ * 主进程只负责预检、进度转发、指针原子切换与失败回滚，因此界面不会假死，且可随时取消。
+ * 拿不到子进程入口时自动退回 inline 同步实现（行为与旧版完全一致）。
+ */
+export async function migrateActiveLibraryTo(
+  targetPath: string,
+  options: MigrateOptions = {}
+): Promise<MigrationResult> {
   const { onProgress, signal } = options
   const report = (phase: MigrationProgress['phase'], message: string, percent: number): void => {
     onProgress?.({ phase, message, percent })
@@ -59,7 +162,7 @@ export function migrateActiveLibraryTo(targetPath: string, options: MigrateOptio
   const target = resolve(targetPath)
 
   if (!existsSync(sourceDb)) {
-    return { ok: false, library: null, error: `源库文件不存在：${sourceDb}`, rolledBack: false }
+    return { ok: false, library: null, error: '源库文件不存在：' + sourceDb, rolledBack: false }
   }
   if (resolve(sourceRoot) === target) {
     return { ok: false, library: null, error: '目标目录与当前书库相同，无需迁移', rolledBack: false }
@@ -68,7 +171,7 @@ export function migrateActiveLibraryTo(targetPath: string, options: MigrateOptio
     return { ok: false, library: null, error: '目标不能是应用的配置目录，请另选位置', rolledBack: false }
   }
 
-  // ---------- 预检 ----------
+  // ---------- 预检（主进程，快速） ----------
   report('precheck', '正在预检目标目录…', 5)
   const sourceBytes = computeDirSize(sourceRoot)
   const precheck = precheckLibraryPath(target, { sourceBytes })
@@ -97,32 +200,23 @@ export function migrateActiveLibraryTo(targetPath: string, options: MigrateOptio
       createdTargetDir = true
     }
 
-    // ---------- 一致快照 ----------
-    report('vacuum', '正在生成一致快照（VACUUM INTO）…', 25)
-    const sourceVersion = readSchemaVersion(sourceDb)
+    // 关掉主进程连接：让子进程的 WAL checkpoint 拿到独占（inline 路径同样需要）
     closeDatabase()
 
-    const src = new Database(sourceDb)
-    try {
-      src.pragma('wal_checkpoint(TRUNCATE)')
-      src.exec(`VACUUM INTO '${escapeSql(targetDb)}'`)
-    } finally {
-      src.close()
+    const inline = process.env.INKWELL_MIGRATE_INLINE === '1'
+    const usedWorker = inline
+      ? false
+      : await runHeavyInWorker({ sourceDb, sourceRoot, target, signal, report })
+
+    if (!usedWorker) {
+      report('vacuum', '正在生成一致快照（VACUUM INTO）…', 25)
+      runHeavyMigration({
+        sourceDb,
+        sourceRoot,
+        target,
+        onProgress: (phase, message, percent) => report(phase, message, percent)
+      })
     }
-
-    assertNotAborted(signal)
-
-    // ---------- 复制附属目录 ----------
-    report('copy', '正在复制备份 / 导出 / 封面…', 55)
-    for (const dir of AUX_DIRS) {
-      const from = join(sourceRoot, dir)
-      if (existsSync(from)) cpSync(from, join(target, dir), { recursive: true })
-    }
-
-    // ---------- 校验 ----------
-    report('verify', '正在校验迁移结果…', 75)
-    const verifyError = verifyMigration(sourceDb, targetDb, sourceVersion)
-    if (verifyError) throw new Error(verifyError)
 
     assertNotAborted(signal)
 
@@ -183,47 +277,9 @@ export function migrateActiveLibraryTo(targetPath: string, options: MigrateOptio
       // 源库重开失败（例如文件被占用），交由上层处理
     }
 
-    report('done', `迁移失败：${message}`, 100)
+    report('done', '迁移失败：' + message, 100)
     return { ok: false, library: null, error: message, rolledBack: true }
   }
-}
-
-/** 逐表比对行数 + integrity_check + schema 版本 */
-function verifyMigration(sourceDb: string, targetDb: string, sourceVersion: number | null): string {
-  const targetVersion = readSchemaVersion(targetDb)
-  if (sourceVersion !== null && targetVersion !== null && targetVersion < sourceVersion) {
-    return `目标库 schema 版本偏低（${targetVersion} < ${sourceVersion}）`
-  }
-
-  const src = new Database(sourceDb, { readonly: true })
-  const dst = new Database(targetDb, { readonly: true })
-  try {
-    const integrity = dst.pragma('integrity_check', { simple: true }) as string
-    if (integrity !== 'ok') return `目标库完整性校验失败：${integrity}`
-
-    for (const table of VERIFY_TABLES) {
-      const srcExists = tableExists(src, table)
-      const dstExists = tableExists(dst, table)
-      if (!srcExists && !dstExists) continue
-      if (srcExists !== dstExists) return `表 ${table} 在目标库中缺失`
-      const srcCount = countRows(src, table)
-      const dstCount = countRows(dst, table)
-      if (srcCount !== dstCount) return `表 ${table} 行数不一致（源 ${srcCount} / 目标 ${dstCount}）`
-    }
-    return ''
-  } finally {
-    src.close()
-    dst.close()
-  }
-}
-
-function tableExists(db: Database.Database, table: string): boolean {
-  return Boolean(db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(table))
-}
-
-function countRows(db: Database.Database, table: string): number {
-  const row = db.prepare(`SELECT COUNT(*) AS c FROM "${table}"`).get() as { c: number }
-  return row.c
 }
 
 /** 统计迁移所需字节数（供预检 UI） */

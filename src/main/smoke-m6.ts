@@ -113,10 +113,11 @@ export async function runSmokeM6(): Promise<void> {
     // ---------- 迁移：中断回滚 + 完整迁移 ----------
     const sourcePath = getActiveEntry()?.path ?? ''
     const ctrl = new AbortController()
-    const aborted = migrateActiveLibraryTo(join(BASE, 'C-aborted'), {
+    // R1：迁移现在是异步的（重活在 utilityProcess 里），中断通过 signal / 取消接口生效
+    const aborted = await migrateActiveLibraryTo(join(BASE, 'C-aborted'), {
       signal: ctrl.signal,
       onProgress: (progress) => {
-        if (progress.phase === 'copy') ctrl.abort()
+        if (progress.phase === 'copy' || progress.phase === 'vacuum') ctrl.abort()
       }
     })
     checks.push(['迁移中断被判为失败', !aborted.ok])
@@ -124,7 +125,7 @@ export async function runSmokeM6(): Promise<void> {
     checks.push(['中断后原书库数据无损', listProjects().some((item) => item.name === '甲书')])
 
     const targetC = join(BASE, 'C')
-    const migrated = migrateActiveLibraryTo(targetC)
+    const migrated = await migrateActiveLibraryTo(targetC)
     checks.push(['完整迁移成功', migrated.ok && migrated.library?.path === targetC])
     checks.push(['迁移后数据完整', listProjects().some((item) => item.name === '甲书')])
     checks.push(['目标书库写入 library.json', existsSync(join(targetC, 'library.json'))])

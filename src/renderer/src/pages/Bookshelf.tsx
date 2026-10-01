@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { PasteImportDialog } from '../components/DropZone'
 import GoalWidget from '../components/GoalWidget'
 import ThemeToggle from '../components/ThemeToggle'
-import { GENRE_TEMPLATES, findGenreTemplate } from '../data/genres'
+import { findGenreTemplate, loadGenreTemplates } from '../data/genres'
 import { useAppStore } from '../stores/appStore'
 
 export default function Bookshelf() {
@@ -19,8 +19,10 @@ export default function Bookshelf() {
   const loadStat = useAppStore((s) => s.loadStat)
 
   const [name, setName] = useState('')
-  const [genre, setGenre] = useState(GENRE_TEMPLATES[0].name)
-  const [totalChapters, setTotalChapters] = useState(GENRE_TEMPLATES[0].chapters)
+  // M11：题材下拉包含内置模板 + 题材包导入的模板
+  const [genreTemplates] = useState(() => loadGenreTemplates())
+  const [genre, setGenre] = useState(genreTemplates[0].name)
+  const [totalChapters, setTotalChapters] = useState(genreTemplates[0].chapters)
   const [premise, setPremise] = useState('')
   const [pasteOpen, setPasteOpen] = useState(false)
 
@@ -130,13 +132,13 @@ export default function Bookshelf() {
           </label>
 
           <label className="flex flex-col gap-1.5">
-            <span className="text-xs text-stone-500">题材（{GENRE_TEMPLATES.length} 种模板）</span>
+            <span className="text-xs text-stone-500">题材（{genreTemplates.length} 种模板）</span>
             <select
               value={genre}
               onChange={(e) => handleGenreChange(e.target.value)}
               className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm outline-none focus:border-amber-500"
             >
-              {GENRE_TEMPLATES.map((item) => (
+              {genreTemplates.map((item) => (
                 <option key={item.name} value={item.name}>
                   {item.name}
                 </option>

@@ -1,6 +1,7 @@
 import type {
   AuditReport,
   CharacterCard,
+  CharacterSaveInput,
   CharacterStateDelta,
   ContinuityFacts,
   MemoryChapter,
@@ -139,6 +140,84 @@ export function listCharacters(projectId: number): CharacterCard[] {
     .orderBy(asc(character.id))
     .all()
     .map(toCharacterDto)
+}
+
+/**
+ * R12：手工保存角色卡（角色矩阵此前只能从正文重建，用户无法修正设定）。
+ * 有 id 就按 id 更新（允许改名），没有就按 (projectId, name) upsert。
+ */
+export function saveCharacter(input: CharacterSaveInput): CharacterCard[] {
+  const db = getDb()
+  const now = Date.now()
+  const name = input.name.trim()
+  const patch: CharacterPatch = {
+    role: input.role,
+    appearance: input.appearance,
+    personality: input.personality,
+    background: input.background,
+    abilities: input.abilities,
+    motivation: input.motivation,
+    relationships: input.relationships,
+    csLocation: input.csLocation,
+    csPower: input.csPower,
+    csState: input.csState,
+    csItems: input.csItems,
+    csRecent: input.csRecent
+  }
+
+  if (input.id !== undefined) {
+    const existing = db.select().from(character).where(eq(character.id, input.id)).get()
+    if (!existing) throw new Error('角色不存在：' + input.id)
+    const merged: Record<string, unknown> = { name, updatedAt: now }
+    for (const [key, value] of Object.entries(patch)) {
+      if (value !== undefined) merged[key] = value
+    }
+    db.update(character).set(merged).where(eq(character.id, input.id)).run()
+    return listCharacters(existing.projectId)
+  }
+
+  const projectId = input.projectId
+  const duplicated = db
+    .select()
+    .from(character)
+    .where(and(eq(character.projectId, projectId), eq(character.name, name)))
+    .get()
+  if (duplicated) {
+    upsertCharacter(projectId, name, patch)
+    return listCharacters(projectId)
+  }
+
+  db.insert(character)
+    .values({
+      projectId,
+      name,
+      role: patch.role ?? '',
+      appearance: patch.appearance ?? '',
+      personality: patch.personality ?? '',
+      background: patch.background ?? '',
+      abilities: patch.abilities ?? '',
+      motivation: patch.motivation ?? '',
+      relationships: patch.relationships ?? '',
+      csLocation: patch.csLocation ?? '',
+      csPower: patch.csPower ?? '',
+      csState: patch.csState ?? '',
+      csItems: patch.csItems ?? [],
+      csRecent: patch.csRecent ?? '',
+      csUpdatedCh: 0,
+      createdAt: now,
+      updatedAt: now
+    })
+    .run()
+  return listCharacters(projectId)
+}
+
+/** R12：删除角色卡 */
+export function removeCharacter(id: number): CharacterCard[] {
+  const db = getDb()
+  const row = db.select().from(character).where(eq(character.id, id)).get()
+  if (!row) return []
+  db.delete(character).where(eq(character.id, id)).run()
+  return listCharacters(row.projectId)
 }
 
 export interface CharacterPatch {

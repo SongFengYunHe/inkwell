@@ -3,6 +3,8 @@ import type {
   BriefSaveInput,
   ChapterBrief,
   ChapterDraft,
+  ChapterDraftSummary,
+  DraftContentInput,
   DraftSaveInput,
   Project,
   ProjectCreateInput,
@@ -189,6 +191,50 @@ export function deleteBrief(id: number): void {
 }
 
 /* ---------------------------------- 正文 --------------------------------- */
+
+/**
+ * R10：正文列表（不含 content）。
+ * 章节导航 / 导出对话框 / 版本下拉只需要「有没有正文、第几版」，
+ * 把几 MB 的正文塞进列表接口是纯浪费。
+ */
+export function listDraftSummaries(projectId: number): ChapterDraftSummary[] {
+  return getDb()
+    .select({
+      id: chapterDraft.id,
+      projectId: chapterDraft.projectId,
+      chapterNo: chapterDraft.chapterNo,
+      version: chapterDraft.version,
+      status: chapterDraft.status,
+      source: chapterDraft.source,
+      wordCount: chapterDraft.wordCount,
+      deletedAt: chapterDraft.deletedAt,
+      createdAt: chapterDraft.createdAt,
+      updatedAt: chapterDraft.updatedAt
+    })
+    .from(chapterDraft)
+    .where(and(eq(chapterDraft.projectId, projectId), isNull(chapterDraft.deletedAt)))
+    .orderBy(asc(chapterDraft.chapterNo), desc(chapterDraft.version))
+    .all()
+}
+
+/** R10：按章取正文（version 缺省取最新版） */
+export function getDraftContent(input: DraftContentInput): ChapterDraft | null {
+  const rows = getDb()
+    .select()
+    .from(chapterDraft)
+    .where(
+      and(
+        eq(chapterDraft.projectId, input.projectId),
+        eq(chapterDraft.chapterNo, input.chapterNo),
+        isNull(chapterDraft.deletedAt)
+      )
+    )
+    .orderBy(desc(chapterDraft.version))
+    .all()
+  if (rows.length === 0) return null
+  if (input.version === undefined) return rows[0]
+  return rows.find((row) => row.version === input.version) ?? null
+}
 
 export function listDrafts(projectId: number): ChapterDraft[] {
   return getDb()

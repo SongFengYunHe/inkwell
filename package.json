@@ -1,6 +1,6 @@
 {
   "name": "inkwell",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Inkwell · 本地优先的 AI 长篇小说生产工作台",
   "author": "Inkwell",
@@ -23,6 +23,8 @@
     "smoke:m7": "electron-vite build && electron . --smoke-m7",
     "smoke:m8": "electron-vite build && electron . --smoke-m8",
     "smoke:m9": "electron-vite build && electron . --smoke-m9",
+    "smoke:m10": "electron-vite build && electron . --smoke-m10",
+    "smoke:m11": "electron-vite build && electron . --smoke-m11",
     "clean:release": "node scripts/clean-release.mjs",
     "pack:dir": "npm run clean:release && electron-vite build && electron-builder --win --dir --publish never",
     "dist:win": "npm run clean:release && electron-vite build && electron-builder --win --publish never"

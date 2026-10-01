@@ -80,6 +80,31 @@ export interface ChapterDraft {
   updatedAt: number
 }
 
+/**
+ * R10：正文列表用的轻量摘要（**不含 content**）。
+ * 一本书几百章的正文可能有几 MB，列表接口不再把它们全量传给渲染进程；
+ * 正文按章按需通过 draft.content 拉取。
+ */
+export interface ChapterDraftSummary {
+  id: number
+  projectId: number
+  chapterNo: number
+  version: number
+  status: string
+  source: string
+  wordCount: number
+  deletedAt: number | null
+  createdAt: number
+  updatedAt: number
+}
+
+export interface DraftContentInput {
+  projectId: number
+  chapterNo: number
+  /** 缺省取最新版本 */
+  version?: number
+}
+
 /** 新建项目入参 */
 export interface ProjectCreateInput {
   name: string
@@ -381,6 +406,61 @@ export interface AuditReport {
   /** 是否由模型补充了语义审计 */
   modelAssisted: boolean
   createdAt: number
+  /** M10：文风贴合度 0–100（未生成画像时为空） */
+  styleScore?: number
+  /** M10：文风逐项检查结果 */
+  styleChecks?: StyleCheck[]
+}
+
+/* ============================ M10：质量闭环 ============================ */
+
+/** 文风一致性单项检查（确定性指标，不调用模型） */
+export interface StyleCheck {
+  dimension: string
+  /** 0–100，越高越贴合画像 */
+  score: number
+  /** 实测值的人类可读描述 */
+  actual: string
+  /** 画像期望值的人类可读描述 */
+  expected: string
+  passed: boolean
+  /** 偏离说明（可直接展示给用户） */
+  detail: string
+}
+
+/** 章节文风体检报告 */
+export interface StyleAuditReport {
+  projectId: number
+  chapterNo: number
+  /** 加权总分 0–100 */
+  score: number
+  checks: StyleCheck[]
+  /** 可选模型复核给出的「最不像的段落」与建议 */
+  modelNotes: string[]
+  createdAt: number
+}
+
+/** 审计维度配置（设置页「审稿」Tab） */
+export interface AuditConfig {
+  /** 被关闭的维度名（与 AuditCheck.dimension 对齐） */
+  disabledDimensions: string[]
+  /** 低于该严重度的问题不计入不通过 */
+  minSeverity: 'info' | 'warn' | 'error'
+  /** warn 级问题是否算不通过 */
+  countWarnAsFail: boolean
+  updatedAt: number | null
+}
+
+export interface AuditConfigSaveInput {
+  disabledDimensions?: string[]
+  minSeverity?: 'info' | 'warn' | 'error'
+  countWarnAsFail?: boolean
+}
+
+/** M10：段落级 diff 行 */
+export interface RevisionDiffLine {
+  type: 'same' | 'add' | 'del'
+  text: string
 }
 
 /** 七个真相文件（从记忆表投影而来，只读） */
@@ -495,7 +575,7 @@ export interface FixResult {
 }
 
 /** 导出格式 */
-export type ExportFormat = 'txt' | 'md' | 'docx' | 'epub'
+export type ExportFormat = 'txt' | 'md' | 'docx' | 'epub' | 'pdf'
 
 export interface ExportInput {
   projectId: number
@@ -881,6 +961,8 @@ export interface SearchGroup {
 }
 
 export interface SearchResult {
+  /** R11：检索策略说明（例如短词走了优先小表的路径），供 UI 如实展示 */
+  notes?: string[]
   query: string
   /** 实际使用的检索模式：fts（≥3 字符）或 like（1~2 字符短查询回退） */
   mode: 'fts' | 'like'
@@ -1116,7 +1198,86 @@ export interface DraftRevision {
   /** 改动来由（如命中的审计维度清单） */
   userPrompt: string
   wordCount: number
+  /** M10：改前摘要（400 字以内） */
+  beforeExcerpt: string
+  /** M10：改后摘要（400 字以内） */
+  afterExcerpt: string
+  /** M10：段落级 diff */
+  diff: RevisionDiffLine[]
+  /** M10：是否已回退到该修订之前的版本 */
+  reverted: boolean
   createdAt: number
+}
+
+/** M10：回退某条修订的结果 */
+export interface RevertRevisionResult {
+  draft: ChapterDraft
+  /** 被回退的修订序号 */
+  revisionIdx: number
+}
+
+/* ============================ M11：产出与分发 ============================ */
+
+/** 题材包（可分享的「题材 + 提示词覆写 + 校验模板」组合） */
+export interface ThemePack {
+  /** 包格式版本，便于以后兼容 */
+  packVersion: 1
+  name: string
+  description: string
+  /** 导出的 Inkwell 版本 */
+  appVersion: string
+  exportedAt: number
+  /** 题材模板（与 renderer/data/genres.ts 结构一致：name + 推荐章数 + 文风建议） */
+  genres: Array<{ name: string; chapters: number; style: string }>
+  /** 提示词覆写（key → { system, instruction }） */
+  promptOverrides: Array<{ key: string; system: string; instruction: string }>
+  /** 导入校验必填字段模板 */
+  requiredFields: string[]
+}
+
+/** 题材模板（渲染层 data/genres.ts 的结构；主进程只做透传与统计） */
+export interface GenreTemplate {
+  name: string
+  chapters: number
+  style: string
+}
+
+export interface PackExportInput {
+  name: string
+  description?: string
+  /** 是否把当前提示词覆写一起打包 */
+  includePrompts?: boolean
+  /** 渲染层传入的题材模板列表（主进程拿不到渲染层的静态资源） */
+  genres?: GenreTemplate[]
+}
+
+export interface PackImportResult {
+  name: string
+  genresAdded: number
+  promptsApplied: number
+  requiredFields: string
+  /** 包里的题材模板（渲染层负责落本地存储并合并进题材下拉） */
+  genres: GenreTemplate[]
+}
+
+/* ============================ R12：角色卡编辑 ============================ */
+
+export interface CharacterSaveInput {
+  id?: number
+  projectId: number
+  name: string
+  role?: string
+  appearance?: string
+  personality?: string
+  background?: string
+  abilities?: string
+  motivation?: string
+  relationships?: string
+  csLocation?: string
+  csPower?: string
+  csState?: string
+  csItems?: string[]
+  csRecent?: string
 }
 
 /** 预加载脚本向渲染进程暴露的 API 契约 */
@@ -1138,7 +1299,10 @@ export interface InkwellApi {
     expand(input: BriefExpandInput): Promise<BriefSuggestion>
   }
   draft: {
-    list(projectId: number): Promise<ChapterDraft[]>
+    /** R10：只取摘要（不含正文），避免一次把整本正文传进渲染进程 */
+    list(projectId: number): Promise<ChapterDraftSummary[]>
+    /** R10：按章按需拉取某一版正文 */
+    content(input: DraftContentInput): Promise<ChapterDraft | null>
     save(input: DraftSaveInput): Promise<ChapterDraft>
     remove(id: number): Promise<void>
     /** 对某章正文跑完整审计并落库，返回报告 */
@@ -1248,6 +1412,8 @@ export interface InkwellApi {
     precheck(path: string): Promise<LibraryPrecheck>
     /** 启动迁移向导：把旧 userData 库迁到目标目录（可中断、可回滚） */
     migrate(input: MigrationRequest): Promise<MigrationResult>
+    /** R1：取消正在进行的迁移（走 utilityProcess，取消后目标半成品会被清理、指针不变） */
+    cancelMigrate(): Promise<{ ok: boolean }>
     /** 放弃迁移引导（之后不再自动弹出） */
     dismissMigration(): Promise<void>
     /** 迁移确认无误后清理 userData 里的旧库文件 */
@@ -1303,6 +1469,12 @@ export interface InkwellApi {
     book(input: BookAuditStartInput): Promise<BookAuditStartResult>
     abort(taskId: string): Promise<void>
     onEvent(listener: (event: BookAuditEvent) => void): () => void
+    /** M10：读取审计维度配置 */
+    config(): Promise<AuditConfig>
+    /** M10：保存审计维度配置 */
+    saveConfig(input: AuditConfigSaveInput): Promise<AuditConfig>
+    /** M10：列出全部可用维度名（供设置页渲染开关） */
+    dimensions(): Promise<string[]>
   }
   /** M8：写作统计与目标 */
   stat: {
@@ -1315,11 +1487,15 @@ export interface InkwellApi {
     save(input: PromptTemplateSaveInput): Promise<PromptTemplateInfo>
     reset(key: string): Promise<PromptTemplateInfo>
   }
-  /** A2：文风仿写画像 */
+  /** A2：文风仿写画像 + M10：文风一致性体检 */
   style: {
     get(projectId: number): Promise<StyleProfile | null>
     generate(input: StyleProfileGenerateInput): Promise<StyleProfile>
     clear(projectId: number): Promise<void>
+    /** M10：对某章做文风一致性体检（确定性指标；useModel 时追加模型复核） */
+    audit(input: { projectId: number; chapterNo: number; useModel?: boolean }): Promise<StyleAuditReport>
+    /** M10：整本平均文风贴合度（未生成画像时为 null） */
+    score(projectId: number): Promise<number | null>
   }
   /** A3：向量检索（RAG） */
   vector: {
@@ -1344,9 +1520,24 @@ export interface InkwellApi {
     save(input: VolumeSaveInput): Promise<Volume[]>
     remove(id: number): Promise<Volume[]>
   }
-  /** A5：修订记录（计划书 §5.1 draft_revision） */
+  /** A5：修订记录（计划书 §5.1 draft_revision）+ M10：回退 */
   revision: {
     list(projectId: number, chapterNo: number): Promise<DraftRevision[]>
+    /** M10：回退到某条修订之前（落一个新版本，不覆盖历史） */
+    revert(input: { projectId: number; chapterNo: number; revisionId: number }): Promise<RevertRevisionResult>
+  }
+  /** R12：角色卡（真相文件 character_matrix 的可编辑来源） */
+  character: {
+    list(projectId: number): Promise<CharacterCard[]>
+    save(input: CharacterSaveInput): Promise<CharacterCard[]>
+    remove(id: number): Promise<CharacterCard[]>
+  }
+  /** M11：题材包（题材 + 提示词覆写 + 校验模板）导入导出 */
+  pack: {
+    /** 导出到用户选择的文件；取消时返回 null */
+    export(input: PackExportInput): Promise<{ path: string } | null>
+    /** 从用户选择的文件导入；取消时返回 null */
+    import(): Promise<PackImportResult | null>
   }
   /** M7：Electron 44 已移除 File.path，拖拽落点必须经 preload 的 webUtils 解析 */
   resolveDropPath(file: File): string

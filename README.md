@@ -112,6 +112,22 @@
   - 专注模式不再切换到另一棵 React 树（此前会把未保存的正文丢掉），并补上专注模式下的「保存修改」；
   - 删除失败不再弹「已移入回收站」；全书体检「一键修复选中章」不再把已付费的模型审计结果覆盖成确定性报告；导入「全选 / 只选新建」改为一次批量 IPC；拖拽落点坐标加兜底；渲染层调用全部有错误反馈。
 
+**M10 · 质量闭环深化 —— 已完成**
+
+- **文风一致性打分**：正文工具条「文风体检」按文风画像逐项打分（句长与方差 / 对话占比 / 段落节奏 / 标志性用词命中 / 禁忌写法 / 比喻密度 / 重复词密度），给出 0–100 贴合度与「实测 vs 期望」明细；勾选「模型复核」再由审稿模型指出最不像的段落。**没有画像时走通用基线**，不会因为没生成画像就什么都不给
+- **审计维度可配置**：设置页「审稿口径」可逐维度开关（14 项确定性 + 语义维度）、设定最低计入严重度、以及 warn 是否算「不通过」；配置落 `audit_config`（单行）
+- **修复可回滚 + 改前改后对比**：`draft_revision` 增记改前 / 改后摘要与段落级 diff，正文面板「修订历史」可展开看出「＋ / － / 同」的行，并可**一键回退到该修订之前的版本**（落一个新版本，历史版本都还在；回退会再记一条 manual 修订）
+- **整本审计断点续跑（R7）**：审计任务落 `audit_run`（cursor / total / est_tokens），中途中断标记 aborted；再次启动会自动从 cursor 续跑并复用已审章节的报告；token 预估改为按实际字数分档，不再是一个固定常数
+- **本轮同时清掉 R1–R12 全部遗留缺陷**（详见 `docs/第三阶段计划书.md` §3.2）：迁移移出主线程且可取消、`openLibrary` 指针切换原子化、`locateLibrary` 不再劫持别的书库、切章不再丢未保存正文、导入暂存在启动维护里清理、应用图标、正文列表只传摘要（正文按需拉取）、短词检索优先小表、角色卡可手工编辑
+
+**M11 · 产出与分发 —— 已完成**
+
+- **PDF 导出**：导出对话框新增 PDF，A4 排版、封面页（书名 / 题材 / 字数）+ 目录（卷 → 章）+ 分卷标题 + 衬线正文；用 Electron 自带的 `webContents.printToPDF` 生成（零新增依赖、隐藏窗口用完即销毁）。**不内嵌中文字体**（用系统字体栈），避免安装包体积失控
+- **分卷标题生效（R9）**：TXT / MD / DOCX 的分卷标题优先用你填的卷名（如「第一卷 山雨」），没填才回退「第 N 卷」
+- **应用图标（R6）**：`resources/icon.ico`（6 种尺寸）+ `resources/icon.png`，`buildResources` 从被 .gitignore 忽略的 `build/` 迁到 `resources/`，安装包 / 快捷方式 / 卸载器都有图标
+- **题材包**：设置页「题材包」可把「题材模板 + 提示词覆写 + 校验必填字段」导出成一个 `.json` 分享给别人；导入后题材进入「新建项目」下拉，提示词覆写直接生效，未知模板 key 会跳过而不是整体失败
+- **更新通道与签名**：`release` 工作流在推 `v*` tag 时构建并发布到 GitHub Releases（含 `latest.yml`，即自动更新的源）；`publish` 显式指向 `SongFengYunHe/inkwell`。**当前安装包未做代码签名**，首次运行会有 SmartScreen 提示——需要签名时在 CI 注入 `CSC_LINK` / `CSC_KEY_PASSWORD` 即可，详见下方「发布与自动更新」
+
 > 说明：安装后目录约 336MB，其中 Electron 44 运行时（exe + 共享库 + 语言包）约占 320MB，属框架基线；应用自身的代码与依赖只占约 10MB。长期降体积的路径是迁移 Tauri（见计划书 §9.3）。
 
 ## 技术栈
@@ -142,6 +158,8 @@ npm run smoke:m6     # 构建并跑一次 M6 自检（多书库隔离 / 迁移�
 npm run smoke:m7     # 构建并跑一次 M7 自检（编码探测 / docx+epub 读回 / 大纲分层 / 字段抽取 / 差异预览与落库）
 npm run smoke:m8     # 构建并跑一次 M8 自检（FTS5 trigram 实测 / 中英文检索 / 整本审计聚合 / 字数统计）
 npm run smoke:m9     # 构建并跑一次 M9 自检（提示词覆写 / 文风画像 / 向量索引与召回 / 更新状态 / 分卷与修订 / 两个数据安全回归）
+npm run smoke:m10    # 构建并跑一次 M10 自检（审计配置 / 文风打分 / 修订 diff 与回退 / 整本审计断点续跑）
+npm run smoke:m11    # 构建并跑一次 M11 自检（PDF 导出真实性 / 卷名生效 / 题材包往返与非法包拒绝）
 npm run clean:release # 清空唯一打包目录 release/（被占用时明确指出是哪个文件，且不删除任何东西）
 npm run dist:win     # 打包 Windows 安装包到 release/（NSIS）
 ```
@@ -237,6 +255,22 @@ npx electron . --smoke-m8
 > **不要就地运行 `release/win-unpacked/Inkwell.exe`**：Windows 上被占用的文件会让下次打包在删除旧目录时 EBUSY，electron-builder 会把 `win-unpacked` 掏空并留下 300MB+ 的 `win-unpacked.tmp`（历史上真实发生过两次）。要跑解包版自检，请先把整个 `win-unpacked` 复制到 `%TEMP%` 再运行。
 > `clean:release` 采用「先原子改名、再删除」：目录被占用时它会在**不删任何文件**的前提下失败，并列出是哪个文件被占用。
 
+### 发布与自动更新
+
+打一个 `v*` tag 即触发 [release.yml](.github/workflows/release.yml)：在干净 runner 上构建 NSIS 安装包并连同 `latest.yml` 发布到 GitHub Releases——这正是应用内自动更新的源（设置页「关于」→「检查更新」）。CI 同时会把本次安装包作为 artifact 挂到 Run 上（`inkwell-installer`，保留 30 天），本地打包受限时可以直接下载。
+
+```powershell
+git tag -a v1.0.0 -m "Inkwell v1.0.0"
+git push origin v1.0.0        # 触发构建 + 发布 release
+```
+
+| 项 | 说明 |
+|---|---|
+| 更新源 | GitHub Releases 的 `latest.yml`（`electron-builder.yml` 的 `publish` 显式指向 owner/repo） |
+| 更新行为 | 只自动**检查**并提示；下载与安装都必须由你在设置页点按钮触发，不会自动重启应用 |
+| 代码签名 | **当前未签名**：首次运行会有 SmartScreen 提示。配置好证书后在 CI 注入 `CSC_LINK`（base64/pfx 路径）与 `CSC_KEY_PASSWORD` 即可自动签名，无需改代码 |
+| 回滚 | Release 可手动删除并回退 `latest.yml`；升级前应用会自动备份书库（含非空库的 pre-migrate 快照） |
+
 ```powershell
 npm run clean:release   # 单独清空 release/
 npm run dist:win        # 先清空 release/，再打包（NSIS 安装包 + win-unpacked + latest.yml）
@@ -288,6 +322,11 @@ $env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-bu
 16. **文风仿写**：工作区「设定与大纲」底部粘贴一段参考文本 → 生成文风画像，此后每章都按这份画像写
 17. **向量检索**：设置页「向量检索」开启后用 embedder 端点建立索引，写作时按细纲召回相关回忆（默认关闭，会消耗 embedding 额度）
 18. **检查更新**：设置页「关于」可检查 / 下载 / 重启安装；只在你点按钮时才下载，不自动安装
+19. **文风体检**：正文工具条点「文风体检」看这一章有多贴合你的文风画像；不满意可勾「含模型复核」看最不像的段落
+20. **审稿口径**：设置页「审稿口径」可关掉不想看的审计维度、调整「什么算不通过」
+21. **修订回退**：正文下方「修订历史」展开可看改前 / 改后与段落 diff，必要时点「回退到修改前」
+22. **导出 PDF**：导出对话框勾上 PDF，得到带封面与目录的 A4 排版本
+23. **分享题材包**：设置页「题材包」导出 `.json` 给朋友，或在「记忆」Tab 里手工修正角色卡
 
 #### 用外部 Agent 零成本跑完整本
 
@@ -361,6 +400,8 @@ src/
 │  ├─ mcp/               # MCP Server（stdio）入口与工具实现
 │  ├─ bridge/            # 任务单桥（导出 task.md）
 │  ├─ prompts/           # 内置提示词模板（zh-CN）+ registry（A1 可覆写模板注册表与变量替换）
+│  ├─ packaging/         # （M11）题材包：theme-pack（构建 / 校验 / 应用）
+│  ├─ library/           # migrate（主进程编排）/ migrate-worker（utilityProcess 入口）/ migrate-heavy（可复用重活）
 │  ├─ update.ts          # A4 自动更新（electron-updater 封装与状态广播）
 │  ├─ security/          # safeStorage 密钥加密
 │  └─ ipc/               # IPC handlers（zod 校验）
@@ -372,6 +413,7 @@ src/
 │  │                     #   + 导入：DropZone / OutlineTree / FieldDiff / ValidationReport
 │  │                     #   + M8：SearchPalette / BookAuditPanel / GoalWidget
 │  │                     #   + M9：PromptPanel / VectorPanel / UpdatePanel / StylePanel / VolumePanel
+│  │                     #   + M10：StyleAuditPanel / AuditConfigPanel / CharacterPanel；M11：PackPanel
 │  ├─ data/              # 题材模板（30 种）
 │  └─ stores/            # zustand
 └─ shared/               # 跨进程共享的类型与 IPC 契约

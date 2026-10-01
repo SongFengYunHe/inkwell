@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import AgentPanel from '../components/AgentPanel'
+import AuditConfigPanel from '../components/AuditConfigPanel'
+import PackPanel from '../components/PackPanel'
 import BackupPanel from '../components/BackupPanel'
 import PromptPanel from '../components/PromptPanel'
 import ProviderPanel from '../components/ProviderPanel'
@@ -20,6 +22,8 @@ type SettingsTab =
   | 'usage'
   | 'prompt'
   | 'rag'
+  | 'review'
+  | 'pack'
   | 'data'
   | 'trash'
   | 'about'
@@ -32,6 +36,8 @@ const TABS: Array<{ key: SettingsTab; label: string }> = [
   { key: 'usage', label: '用量' },
   { key: 'prompt', label: '提示词' },
   { key: 'rag', label: '向量检索' },
+  { key: 'review', label: '审稿口径' },
+  { key: 'pack', label: '题材包' },
   { key: 'data', label: '数据与备份' },
   { key: 'trash', label: '回收站' },
   { key: 'about', label: '关于' }
@@ -184,6 +190,8 @@ export default function Settings() {
         {tab === 'usage' && <UsagePanel />}
         {tab === 'prompt' && <PromptPanel />}
         {tab === 'rag' && <VectorPanel />}
+        {tab === 'review' && <AuditConfigPanel />}
+        {tab === 'pack' && <PackPanel />}
         {tab === 'data' && <BackupPanel />}
         {tab === 'trash' && <TrashPanel />}
         {tab === 'about' && <AboutPanel />}

@@ -42,7 +42,7 @@ export default function Workspace() {
     return <div className="flex flex-1 items-center justify-center text-sm text-stone-400">加载项目…</div>
   }
 
-  const writtenChapters = new Set(drafts.filter((item) => item.content.trim()).map((item) => item.chapterNo)).size
+  const writtenChapters = new Set(drafts.filter((item) => item.wordCount > 0).map((item) => item.chapterNo)).size
 
   // 专注模式（M5）：只作为「布局开关」——不再切换到另一棵 React 树，
   // 否则 DraftPanel 会被卸载重建，本地未保存的正文会直接丢失（上一版真实存在的 bug）。

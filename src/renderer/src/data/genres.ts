@@ -11,6 +11,54 @@ export interface GenreTemplate {
   style: string
 }
 
+/** M11：题材包导入的题材存在本地（与内置模板合并，不污染内置列表） */
+const IMPORTED_KEY = 'inkwell.genres.imported'
+
+export function loadImportedGenres(): GenreTemplate[] {
+  try {
+    const raw = localStorage.getItem(IMPORTED_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((item): item is GenreTemplate =>
+        Boolean(item) &&
+        typeof (item as GenreTemplate).name === 'string' &&
+        typeof (item as GenreTemplate).chapters === 'number'
+      )
+      .map((item) => ({ name: item.name, chapters: item.chapters, style: String(item.style ?? '') }))
+  } catch {
+    return []
+  }
+}
+
+/** 合并内置 + 导入的题材（同名以内置为准，避免被包覆盖） */
+export function loadGenreTemplates(): GenreTemplate[] {
+  const builtinNames = new Set(GENRE_TEMPLATES.map((item) => item.name))
+  const extra = loadImportedGenres().filter((item) => !builtinNames.has(item.name))
+  return [...GENRE_TEMPLATES, ...extra]
+}
+
+/** 导入题材包时调用：合并去重后落本地存储 */
+export function saveImportedGenres(incoming: GenreTemplate[]): number {
+  const existing = loadImportedGenres()
+  const builtinNames = new Set(GENRE_TEMPLATES.map((item) => item.name))
+  const merged = [...existing]
+  let added = 0
+  for (const item of incoming) {
+    if (!item?.name || builtinNames.has(item.name)) continue
+    if (merged.some((entry) => entry.name === item.name)) continue
+    merged.push({ name: item.name, chapters: item.chapters || 100, style: item.style ?? '' })
+    added += 1
+  }
+  try {
+    localStorage.setItem(IMPORTED_KEY, JSON.stringify(merged))
+  } catch {
+    // 存储失败不影响主流程
+  }
+  return added
+}
+
 export const GENRE_TEMPLATES: GenreTemplate[] = [
   { name: '玄幻', chapters: 300, style: '热血爽利，节奏快，重视打脸与升级' },
   { name: '仙侠', chapters: 200, style: '克制冷峻，重意境与道法玄机' },

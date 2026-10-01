@@ -1,4 +1,5 @@
 import type { DraftRevision, GenerationMode } from '@shared/types'
+import StyleAuditPanel from './StyleAuditPanel'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../stores/appStore'
 import { BUTTON_GHOST, BUTTON_PRIMARY } from './ui'
@@ -30,6 +31,7 @@ export default function DraftPanel() {
   const abortGeneration = useAppStore((s) => s.abortGeneration)
   const saveDraft = useAppStore((s) => s.saveDraft)
   const removeDraft = useAppStore((s) => s.removeDraft)
+  const reloadDrafts = useAppStore((s) => s.reloadDrafts)
   const auditCurrent = useAppStore((s) => s.auditCurrent)
   const fixCurrent = useAppStore((s) => s.fixCurrent)
   const fixResult = useAppStore((s) => s.fixResult)
@@ -50,9 +52,26 @@ export default function DraftPanel() {
   const latest = versions[0] ?? null
 
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null)
+  /** R10：列表里只有摘要，「当前版本」也是摘要 */
   const current = versions.find((item) => item.version === selectedVersion) ?? latest
 
-  const [content, setContent] = useState('')
+  /**
+   * R4 + R10：
+   *   - 正文按章按需从主进程拉取（currentDraft）；
+   *   - 未保存的编辑按「章:版本」记在 store 的 draftBuffers 里，
+   *     因此切章 / 切版本 / 切专注模式都不会再把改动丢掉。
+   */
+  const draftBuffers = useAppStore((s) => s.draftBuffers)
+  const currentDraft = useAppStore((s) => s.currentDraft)
+  const loadDraftContent = useAppStore((s) => s.loadDraftContent)
+  const setDraftBuffer = useAppStore((s) => s.setDraftBuffer)
+  const bufferKey = `${currentChapterNo}:${current?.version ?? 0}`
+  const serverContent =
+    currentDraft && currentDraft.chapterNo === currentChapterNo && currentDraft.version === (current?.version ?? -1)
+      ? currentDraft.content
+      : ''
+  const content = draftBuffers[bufferKey] ?? serverContent
+  const setContent = (value: string): void => setDraftBuffer(bufferKey, value)
   /** A5：本章修订历史（每次一键修复 / 润色 / 重写都会记一条） */
   const [revisions, setRevisions] = useState<DraftRevision[]>([])
 
@@ -64,12 +83,38 @@ export default function DraftPanel() {
     void window.inkwell.revision.list(activeProjectId, currentChapterNo).then(setRevisions)
   }, [activeProjectId, currentChapterNo, current?.id, fixResult])
 
+  /** M10：回退到某条修订之前（落新版本，不覆盖历史） */
+  const revertRevision = async (input: {
+    projectId: number
+    chapterNo: number
+    revisionId: number
+  }): Promise<void> => {
+    if (!window.confirm('回退会用该修订「修改前」的正文落一个新版本（历史版本都还在）。继续？')) return
+    try {
+      await window.inkwell.revision.revert(input)
+      await reloadDrafts()
+      if (activeProjectId !== null) {
+        setRevisions(await window.inkwell.revision.list(activeProjectId, input.chapterNo))
+      }
+    } catch (err) {
+      window.alert('回退失败：' + (err instanceof Error ? err.message : String(err)))
+    }
+  }
+
   useEffect(() => {
     setSelectedVersion(null)
   }, [currentChapterNo, activeProjectId])
   useEffect(() => {
-    setContent(current?.content ?? '')
-  }, [current?.id, current?.content])
+    if (activeProjectId === null || current === null) return
+    if (
+      currentDraft &&
+      currentDraft.chapterNo === currentChapterNo &&
+      currentDraft.version === current.version
+    ) {
+      return
+    }
+    void loadDraftContent(activeProjectId, currentChapterNo, current.version)
+  }, [activeProjectId, currentChapterNo, current?.version, currentDraft, current, loadDraftContent])
 
   const streamRef = useRef<HTMLDivElement>(null)
   const isStreamingHere = generating !== null && generating.chapterNo === currentChapterNo
@@ -79,7 +124,7 @@ export default function DraftPanel() {
   }, [streamText, isStreamingHere])
 
   const hasProvider = providers.some((item) => item.enabled)
-  const dirty = current !== null && content !== current.content
+  const dirty = current !== null && content !== serverContent
 
   const runMode = (mode: GenerationMode): void => {
     void generate(mode)
@@ -96,6 +141,9 @@ export default function DraftPanel() {
       content
     })
   }
+
+  /** R10：版本列表只有摘要，禁用态改用 wordCount 判断「有没有正文」 */
+  const latestHasContent = (latest?.wordCount ?? 0) > 0
 
   // 专注模式：隐藏全部工具栏与提示，只留正文与保存入口（计划书 §8.3）
   if (focusMode) {
@@ -169,7 +217,7 @@ export default function DraftPanel() {
         </button>
         <button
           type="button"
-          disabled={!latest?.content || generating !== null || !hasProvider}
+          disabled={!latestHasContent || generating !== null || !hasProvider}
           onClick={() => runMode('continue')}
           className={BUTTON_GHOST}
         >
@@ -185,7 +233,7 @@ export default function DraftPanel() {
         </button>
         <button
           type="button"
-          disabled={!latest?.content || generating !== null || !hasProvider}
+          disabled={!latestHasContent || generating !== null || !hasProvider}
           onClick={() => runMode('polish')}
           className={BUTTON_GHOST}
         >
@@ -193,7 +241,7 @@ export default function DraftPanel() {
         </button>
         <button
           type="button"
-          disabled={!latest?.content || generating !== null}
+          disabled={!latestHasContent || generating !== null}
           onClick={() => void auditCurrent()}
           className={BUTTON_GHOST}
         >
@@ -201,7 +249,7 @@ export default function DraftPanel() {
         </button>
         <button
           type="button"
-          disabled={!latest?.content || generating !== null}
+          disabled={!latestHasContent || generating !== null}
           onClick={() => void fixCurrent(true)}
           className={BUTTON_GHOST}
         >
@@ -332,17 +380,72 @@ export default function DraftPanel() {
         </div>
       )}
 
+      {current && !isStreamingHere && (
+        <StyleAuditPanel
+          projectId={current.projectId}
+          chapterNo={currentChapterNo}
+          hasContent={latestHasContent}
+        />
+      )}
+
       {revisions.length > 0 && (
         <details className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-500">
           <summary className="cursor-pointer select-none">修订历史（{revisions.length} 条）</summary>
-          <ul className="mt-2 space-y-1">
+          <ul className="mt-2 space-y-2">
             {revisions.slice(0, 8).map((item) => (
-              <li key={item.id} className="flex gap-2">
-                <span className="shrink-0 text-stone-400">#{item.idx}</span>
-                <span className="shrink-0 text-stone-500">{item.type}</span>
-                <span className="min-w-0 flex-1 truncate text-stone-600">{item.userPrompt || '—'}</span>
-                <span className="shrink-0 text-stone-400">{item.wordCount} 字</span>
-                <span className="shrink-0 text-stone-400">{new Date(item.createdAt).toLocaleString('zh-CN')}</span>
+              <li key={item.id} className="rounded border border-stone-200 bg-white px-2 py-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="shrink-0 text-stone-400">#{item.idx}</span>
+                  <span className="shrink-0 text-stone-500">{item.type}</span>
+                  <span className="min-w-0 flex-1 truncate text-stone-600">{item.userPrompt || '—'}</span>
+                  <span className="shrink-0 text-stone-400">{item.wordCount} 字</span>
+                  <span className="shrink-0 text-stone-400">{new Date(item.createdAt).toLocaleString('zh-CN')}</span>
+                  {item.reverted ? (
+                    <span className="shrink-0 rounded bg-stone-100 px-1.5 py-0.5 text-[10px] text-stone-500">已回退</span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void revertRevision({ projectId: item.projectId, chapterNo: item.chapterNo, revisionId: item.id })}
+                      className="shrink-0 text-stone-400 hover:text-amber-700"
+                    >
+                      回退到修改前
+                    </button>
+                  )}
+                </div>
+                {(item.beforeExcerpt || item.afterExcerpt) && (
+                  <details className="mt-1">
+                    <summary className="cursor-pointer select-none text-stone-400">改前 / 改后</summary>
+                    <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div className="rounded bg-red-50/60 p-2 text-[11px] whitespace-pre-wrap text-stone-600">
+                        <p className="mb-1 text-[10px] text-red-600">改前</p>
+                        {item.beforeExcerpt || '（无）'}
+                      </div>
+                      <div className="rounded bg-emerald-50/60 p-2 text-[11px] whitespace-pre-wrap text-stone-600">
+                        <p className="mb-1 text-[10px] text-emerald-700">改后</p>
+                        {item.afterExcerpt || '（无）'}
+                      </div>
+                    </div>
+                    {item.diff.length > 0 && (
+                      <div className="mt-1 max-h-40 overflow-y-auto rounded bg-stone-50 p-2 text-[11px]">
+                        {item.diff.slice(0, 200).map((line, index) => (
+                          <p
+                            key={index}
+                            className={
+                              line.type === 'add'
+                                ? 'text-emerald-700'
+                                : line.type === 'del'
+                                  ? 'text-red-600 line-through'
+                                  : 'text-stone-500'
+                            }
+                          >
+                            {line.type === 'add' ? '＋ ' : line.type === 'del' ? '－ ' : '　 '}
+                            {line.text.slice(0, 120)}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                  </details>
+                )}
               </li>
             ))}
           </ul>

@@ -3,6 +3,7 @@ import type {
   BriefSuggestion,
   ChapterBrief,
   ChapterDraft,
+  ChapterDraftSummary,
   DraftSaveInput,
   GenerateEvent,
   GenerationMode,
@@ -79,7 +80,12 @@ interface AppState {
   projects: Project[]
   activeProjectId: number | null
   briefs: ChapterBrief[]
-  drafts: ChapterDraft[]
+  /** R10：正文列表只保存摘要（不含 content） */
+  drafts: ChapterDraftSummary[]
+  /** R10：当前章当前版按需加载的正文 */
+  currentDraft: ChapterDraft | null
+  /** R4：未保存的编辑按「章:版本」缓存，切章 / 切版本不再丢稿 */
+  draftBuffers: Record<string, string>
   providers: Provider[]
   routes: RoleRoute[]
   usage: UsageSummary | null
@@ -146,6 +152,10 @@ interface AppState {
   removeBrief: (id: number) => Promise<void>
   expandBrief: (input: BriefExpandInput) => Promise<BriefSuggestion | null>
   saveDraft: (input: DraftSaveInput) => Promise<void>
+  /** R10：按章按需加载正文 */
+  loadDraftContent: (projectId: number, chapterNo: number, version?: number) => Promise<void>
+  /** R4：记录未保存的编辑（key = 章:版本） */
+  setDraftBuffer: (key: string, content: string) => void
   removeDraft: (id: number) => Promise<void>
 
   setCurrentChapter: (chapterNo: number) => void
@@ -287,6 +297,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeProjectId: null,
   briefs: [],
   drafts: [],
+  currentDraft: null,
+  draftBuffers: {},
   providers: [],
   routes: [],
   usage: null,
@@ -441,27 +453,51 @@ export const useAppStore = create<AppState>((set, get) => ({
   saveDraft: async (input) => {
     const saved = await guard(set, () => window.inkwell.draft.save(input))
     if (!saved) return
+    const key = `${saved.chapterNo}:${saved.version}`
+    const buffers = { ...get().draftBuffers }
+    delete buffers[key]
+    set({ currentDraft: saved, draftBuffers: buffers })
     await get().reloadDrafts()
+  },
+
+  /** R10：按章按需拉取正文 */
+  loadDraftContent: async (projectId, chapterNo, version) => {
+    const draft = await guard(set, () => window.inkwell.draft.content({ projectId, chapterNo, version }))
+    set({ currentDraft: draft ?? null })
+  },
+
+  /** R4：记录未保存的编辑 */
+  setDraftBuffer: (key, content) => {
+    set({ draftBuffers: { ...get().draftBuffers, [key]: content } })
   },
 
   removeDraft: async (id) => {
     const target = get().drafts.find((item) => item.id === id)
+    // R10：撤销需要正文，删除前先把它取回来（摘要里没有 content）
+    const snapshot =
+      target && get().activeProjectId !== null
+        ? await window.inkwell.draft.content({
+            projectId: target.projectId,
+            chapterNo: target.chapterNo,
+            version: target.version
+          })
+        : null
     const ok = await guardOk(set, () => window.inkwell.draft.remove(id))
     if (!ok) return
     await get().reloadDrafts()
-    if (target) {
+    if (target && snapshot) {
       set({
         undo: {
           message: `已把第 ${target.chapterNo} 章 v${target.version} 移入回收站`,
           run: async () => {
             // 软删除行不占用唯一索引，按原版本号重建即可
             await window.inkwell.draft.save({
-              projectId: target.projectId,
-              chapterNo: target.chapterNo,
-              version: target.version,
-              status: target.status,
-              source: target.source,
-              content: target.content
+              projectId: snapshot.projectId,
+              chapterNo: snapshot.chapterNo,
+              version: snapshot.version,
+              status: snapshot.status,
+              source: snapshot.source,
+              content: snapshot.content
             })
             await get().reloadDrafts()
           }
@@ -492,7 +528,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       return
     }
     const drafts = await guard(set, () => window.inkwell.draft.list(projectId))
-    if (drafts) set({ drafts })
+    if (!drafts) return
+    set({ drafts })
+    // R10：列表里没有正文了，当前章的正文要单独拉一次（切项目 / 重新载入后仍能编辑）
+    const chapterNo = get().currentChapterNo
+    if (drafts.some((item) => item.chapterNo === chapterNo)) {
+      await get().loadDraftContent(projectId, chapterNo)
+    } else {
+      set({ currentDraft: null })
+    }
   },
 
   loadProviders: async () => {

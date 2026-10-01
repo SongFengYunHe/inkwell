@@ -1,11 +1,14 @@
 import {
   IpcChannel,
   auditAbortSchema,
+  auditConfigSaveSchema,
   backupNameSchema,
   bookAuditSchema,
   briefExpandSchema,
   briefSaveSchema,
   chapterQuerySchema,
+  characterSaveSchema,
+  draftContentSchema,
   draftSaveSchema,
   exportSchema,
   exportTaskSchema,
@@ -25,6 +28,7 @@ import {
   libraryRemoveSchema,
   libraryRenameSchema,
   librarySettingsSchema,
+  packExportSchema,
   pathSchema,
   pipelineStartSchema,
   pipelineSteerSchema,
@@ -33,6 +37,8 @@ import {
   projectUpdateSchema,
   promptKeySchema,
   promptSaveSchema,
+  revisionRevertSchema,
+  styleAuditSchema,
   providerSaveSchema,
   requestIdSchema,
   revisionQuerySchema,
@@ -46,8 +52,9 @@ import {
   volumeSaveSchema,
   wizardStartSchema
 } from '@shared/ipc'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { rmSync } from 'node:fs'
+
 import type {
   BookAuditEvent,
   GenerateEvent,
@@ -72,7 +79,12 @@ import {
   updateImportItem,
   updateImportItems
 } from '../import/session'
-import { getLatestReview, saveReview } from '../db/memory-repo'
+import { getLatestReview, listCharacters, removeCharacter, saveCharacter, saveReview } from '../db/memory-repo'
+import { applyThemePack, buildThemePack } from '../pack/theme-pack'
+/* M10：质量闭环 */
+import { getAuditConfig, listAuditDimensions, saveAuditConfig } from '../db/audit-config-repo'
+import { auditStyle, projectStyleScore } from '../engine/style-audit'
+import { revertRevision } from '../db/revision-repo'
 import { createRun, latestRun, updateRun } from '../db/pipeline-repo'
 import { auditChapter } from '../engine/audit'
 import { auditBook, estimateBookAudit } from '../engine/audit-book'
@@ -106,7 +118,7 @@ import {
 } from '../providers/store'
 import { backupsDirPath, createBackup, deleteBackup, listBackups, restoreBackup } from '../db/backup'
 import { emptyTrash, listTrash, purgeTrash, restoreTrash } from '../db/trash'
-import { estimateMigrationBytes, migrateActiveLibraryTo } from '../library/migrate'
+import { cancelActiveMigration, estimateMigrationBytes, migrateActiveLibraryTo } from '../library/migrate'
 import { computeDirSize, precheckLibraryPath } from '../library/precheck'
 import {
   addLibrary,
@@ -198,8 +210,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.briefExpand, (_event, raw: unknown) => expandBrief(briefExpandSchema.parse(raw)))
 
   /* --------------------------------- 正文 --------------------------------- */
+  // R10：列表只回摘要（不含正文），正文按章按需拉取
   ipcMain.handle(IpcChannel.draftList, (_event, projectId: unknown) =>
-    repo.listDrafts(projectIdSchema.parse(projectId))
+    repo.listDraftSummaries(projectIdSchema.parse(projectId))
+  )
+  ipcMain.handle(IpcChannel.draftContent, (_event, raw: unknown) =>
+    repo.getDraftContent(draftContentSchema.parse(raw))
   )
   ipcMain.handle(IpcChannel.draftSave, (_event, input: unknown) => repo.saveDraft(draftSaveSchema.parse(input)))
   ipcMain.handle(IpcChannel.draftRemove, (_event, id: unknown) => {
@@ -510,7 +526,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle(IpcChannel.libraryPurgeLegacy, () => purgeLegacyData())
 
-  ipcMain.handle(IpcChannel.libraryMigrate, (event, raw: unknown) => {
+  ipcMain.handle(IpcChannel.libraryMigrate, async (event, raw: unknown) => {
     const input = libraryMigrateSchema.parse(raw)
     const sender = event.sender
     const emitMigration = (payload: MigrationEvent): void =>
@@ -521,12 +537,14 @@ export function registerIpcHandlers(): void {
       emitMigration({ type: 'progress', progress: { phase: 'precheck', message: warning, percent: 5 } })
     }
 
-    const result = migrateActiveLibraryTo(input.targetPath, {
+    // R1：重活在 utilityProcess 里跑；await 期间主进程仍可处理 IPC（含「取消迁移」）
+    const result = await migrateActiveLibraryTo(input.targetPath, {
       onProgress: (progress) => emitMigration({ type: 'progress', progress })
     })
     emitMigration({ type: 'done', result })
     return result
   })
+  ipcMain.handle(IpcChannel.libraryCancelMigrate, () => cancelActiveMigration())
 
   /* ============================== M6：回收站 ============================== */
   ipcMain.handle(IpcChannel.trashList, () => listTrash())
@@ -675,6 +693,37 @@ export function registerIpcHandlers(): void {
     activeAuditTasks.get(auditAbortSchema.parse(raw).taskId)?.abort()
   })
 
+  /* ============================ M10：质量闭环 ============================ */
+
+  ipcMain.handle(IpcChannel.auditConfig, () => getAuditConfig())
+  ipcMain.handle(IpcChannel.auditSaveConfig, (_event, raw: unknown) =>
+    saveAuditConfig(auditConfigSaveSchema.parse(raw))
+  )
+  ipcMain.handle(IpcChannel.auditDimensions, () => listAuditDimensions())
+
+  ipcMain.handle(IpcChannel.styleAudit, async (_event, raw: unknown) => {
+    const input = styleAuditSchema.parse(raw)
+    const controller = new AbortController()
+    registerAborter(controller)
+    try {
+      return await auditStyle({
+        projectId: input.projectId,
+        chapterNo: input.chapterNo,
+        useModel: input.useModel === true,
+        signal: controller.signal
+      })
+    } finally {
+      unregisterAborter(controller)
+    }
+  })
+  ipcMain.handle(IpcChannel.styleScore, (_event, projectId: unknown) =>
+    projectStyleScore(projectIdSchema.parse(projectId))
+  )
+
+  ipcMain.handle(IpcChannel.revisionRevert, (_event, raw: unknown) =>
+    revertRevision(revisionRevertSchema.parse(raw))
+  )
+
   /* ========================= M9 · A1：可覆写提示词模板 ========================= */
 
   ipcMain.handle(IpcChannel.promptList, () => listPromptTemplates())
@@ -746,5 +795,43 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.revisionList, (_event, raw: unknown) => {
     const input = revisionQuerySchema.parse(raw)
     return listRevisions(input.projectId, input.chapterNo)
+  })
+
+  /* ============================ R12：角色卡编辑 ============================ */
+
+  ipcMain.handle(IpcChannel.characterList, (_event, projectId: unknown) =>
+    listCharacters(projectIdSchema.parse(projectId))
+  )
+  ipcMain.handle(IpcChannel.characterSave, (_event, raw: unknown) =>
+    saveCharacter(characterSaveSchema.parse(raw))
+  )
+  ipcMain.handle(IpcChannel.characterRemove, (_event, id: unknown) =>
+    removeCharacter(idSchema.parse(id))
+  )
+
+  /* ============================ M11：题材包导入导出 ============================ */
+
+  ipcMain.handle(IpcChannel.packExport, async (_event, raw: unknown) => {
+    const input = packExportSchema.parse(raw)
+    const pack = buildThemePack(input)
+    const picked = await dialog.showSaveDialog({
+      title: '导出题材包',
+      defaultPath: `${input.name}.inkwell-pack.json`,
+      filters: [{ name: 'Inkwell 题材包', extensions: ['json'] }]
+    })
+    if (picked.canceled || !picked.filePath) return null
+    writeFileSync(picked.filePath, JSON.stringify(pack, null, 2), 'utf8')
+    return { path: picked.filePath }
+  })
+
+  ipcMain.handle(IpcChannel.packImport, async () => {
+    const picked = await dialog.showOpenDialog({
+      title: '导入题材包',
+      properties: ['openFile'],
+      filters: [{ name: 'Inkwell 题材包', extensions: ['json'] }]
+    })
+    if (picked.canceled || picked.filePaths.length === 0) return null
+    const text = readFileSync(picked.filePaths[0], 'utf8')
+    return applyThemePack(JSON.parse(text) as unknown)
   })
 }

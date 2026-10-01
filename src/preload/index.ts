@@ -4,6 +4,7 @@ import type {
   BookAuditStartInput,
   BriefExpandInput,
   BriefSaveInput,
+  DraftContentInput,
   DraftSaveInput,
   ExportInput,
   FixChapterInput,
@@ -26,6 +27,9 @@ import type {
   PromptTemplateSaveInput,
   ProviderSaveInput,
   RoleRouteSaveInput,
+  AuditConfigSaveInput,
+  CharacterSaveInput,
+  PackExportInput,
   SearchQueryInput,
   StatSetGoalInput,
   StyleProfileGenerateInput,
@@ -54,6 +58,7 @@ const api: InkwellApi = {
   },
   draft: {
     list: (projectId: number) => ipcRenderer.invoke(IpcChannel.draftList, projectId),
+    content: (input: DraftContentInput) => ipcRenderer.invoke(IpcChannel.draftContent, input),
     save: (input: DraftSaveInput) => ipcRenderer.invoke(IpcChannel.draftSave, input),
     remove: (id: number) => ipcRenderer.invoke(IpcChannel.draftRemove, id),
     audit: (projectId: number, chapterNo: number) =>
@@ -150,6 +155,7 @@ const api: InkwellApi = {
     rename: (input: { id: string; name: string }) => ipcRenderer.invoke(IpcChannel.libraryRename, input),
     precheck: (path: string) => ipcRenderer.invoke(IpcChannel.libraryPrecheck, path),
     migrate: (input: MigrationRequest) => ipcRenderer.invoke(IpcChannel.libraryMigrate, input),
+    cancelMigrate: () => ipcRenderer.invoke(IpcChannel.libraryCancelMigrate),
     dismissMigration: () => ipcRenderer.invoke(IpcChannel.libraryDismissMigration),
     purgeLegacy: () => ipcRenderer.invoke(IpcChannel.libraryPurgeLegacy),
     settings: () => ipcRenderer.invoke(IpcChannel.librarySettings),
@@ -192,6 +198,9 @@ const api: InkwellApi = {
   audit: {
     book: (input: BookAuditStartInput) => ipcRenderer.invoke(IpcChannel.auditBook, input),
     abort: (taskId: string) => ipcRenderer.invoke(IpcChannel.auditAbort, { taskId }),
+    config: () => ipcRenderer.invoke(IpcChannel.auditConfig),
+    saveConfig: (input: AuditConfigSaveInput) => ipcRenderer.invoke(IpcChannel.auditSaveConfig, input),
+    dimensions: () => ipcRenderer.invoke(IpcChannel.auditDimensions),
     onEvent: (listener: (event: BookAuditEvent) => void) => {
       const handler = (_event: IpcRendererEvent, payload: BookAuditEvent): void => listener(payload)
       ipcRenderer.on(IpcChannel.auditEvent, handler)
@@ -213,7 +222,10 @@ const api: InkwellApi = {
   style: {
     get: (projectId: number) => ipcRenderer.invoke(IpcChannel.styleGet, projectId),
     generate: (input: StyleProfileGenerateInput) => ipcRenderer.invoke(IpcChannel.styleGenerate, input),
-    clear: (projectId: number) => ipcRenderer.invoke(IpcChannel.styleClear, projectId)
+    clear: (projectId: number) => ipcRenderer.invoke(IpcChannel.styleClear, projectId),
+    audit: (input: { projectId: number; chapterNo: number; useModel?: boolean }) =>
+      ipcRenderer.invoke(IpcChannel.styleAudit, input),
+    score: (projectId: number) => ipcRenderer.invoke(IpcChannel.styleScore, projectId)
   },
   vector: {
     status: (projectId: number) => ipcRenderer.invoke(IpcChannel.vectorStatus, projectId),
@@ -221,6 +233,11 @@ const api: InkwellApi = {
     query: (input: { projectId: number; text: string; limit?: number }) =>
       ipcRenderer.invoke(IpcChannel.vectorQuery, input),
     clear: (projectId: number) => ipcRenderer.invoke(IpcChannel.vectorClear, projectId)
+  },
+  /** M11：题材包导入导出 */
+  pack: {
+    export: (input: PackExportInput) => ipcRenderer.invoke(IpcChannel.packExport, input),
+    import: () => ipcRenderer.invoke(IpcChannel.packImport)
   },
   update: {
     status: () => ipcRenderer.invoke(IpcChannel.updateStatus),
@@ -242,7 +259,14 @@ const api: InkwellApi = {
   },
   revision: {
     list: (projectId: number, chapterNo: number) =>
-      ipcRenderer.invoke(IpcChannel.revisionList, { projectId, chapterNo })
+      ipcRenderer.invoke(IpcChannel.revisionList, { projectId, chapterNo }),
+    revert: (input: { projectId: number; chapterNo: number; revisionId: number }) =>
+      ipcRenderer.invoke(IpcChannel.revisionRevert, input)
+  },
+  character: {
+    list: (projectId: number) => ipcRenderer.invoke(IpcChannel.characterList, projectId),
+    save: (input: CharacterSaveInput) => ipcRenderer.invoke(IpcChannel.characterSave, input),
+    remove: (id: number) => ipcRenderer.invoke(IpcChannel.characterRemove, id)
   },
   onMigrationEvent: (listener: (event: MigrationEvent) => void) => {
     const handler = (_event: IpcRendererEvent, payload: MigrationEvent): void => listener(payload)

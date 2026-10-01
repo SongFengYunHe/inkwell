@@ -17,7 +17,9 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
           // MCP Server 独立入口：由外部 Agent 用 node 直接拉起
-          mcp: resolve(__dirname, 'src/main/mcp/index.ts')
+          mcp: resolve(__dirname, 'src/main/mcp/index.ts'),
+          // R1：迁移重活跑在 utilityProcess 子进程里（主进程不阻塞、可取消）
+          'migrate-worker': resolve(__dirname, 'src/main/library/migrate-worker.ts')
         }
       }
     }

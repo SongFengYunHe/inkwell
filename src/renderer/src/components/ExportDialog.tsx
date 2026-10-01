@@ -7,7 +7,8 @@ const FORMATS: Array<{ key: ExportFormat; label: string; hint: string }> = [
   { key: 'txt', label: 'TXT', hint: '纯文本，兼容一切阅读器' },
   { key: 'md', label: 'Markdown', hint: '带目录，方便二次排版' },
   { key: 'docx', label: 'DOCX', hint: 'Word 可直接打开' },
-  { key: 'epub', label: 'EPUB', hint: '电子书，含目录与分章' }
+  { key: 'epub', label: 'EPUB', hint: '电子书，含目录与分章' },
+  { key: 'pdf', label: 'PDF', hint: 'A4 排版，含封面与目录（用系统字体）' }
 ]
 
 /** 导出成书对话框：TXT / MD / DOCX / EPUB（计划书 §10 M4） */
@@ -21,7 +22,7 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
 
   const [selected, setSelected] = useState<ExportFormat[]>(['txt', 'md', 'docx', 'epub'])
 
-  const writtenChapters = new Set(drafts.filter((item) => item.content.trim()).map((item) => item.chapterNo)).size
+  const writtenChapters = new Set(drafts.filter((item) => item.wordCount > 0).map((item) => item.chapterNo)).size
 
   const toggle = (format: ExportFormat): void => {
     setSelected((current) =>

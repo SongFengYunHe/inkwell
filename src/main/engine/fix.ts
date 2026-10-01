@@ -121,7 +121,9 @@ export async function fixChapter(input: FixChapterInput): Promise<FixResult> {
         ? `修复维度：${[...new Set(issues.map((check) => check.dimension))].join('、')}` +
           (modelUsed ? '（含模型定点修复）' : '（仅确定性规则）')
         : '确定性去 AI 味规则',
-    content: draft.content
+    content: draft.content,
+    // M10 §4.3：带上改动前正文，才能生成「改前 / 改后」摘要与段落级 diff
+    beforeContent: latest.content
   })
 
   // 4. 重审：形成修复前后的可观测对比

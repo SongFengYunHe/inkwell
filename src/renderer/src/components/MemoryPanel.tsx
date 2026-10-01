@@ -1,6 +1,7 @@
 import type { AuditCheck } from '@shared/types'
 import { useEffect, type ReactNode } from 'react'
 import { useAppStore } from '../stores/appStore'
+import CharacterPanel from './CharacterPanel'
 import { BUTTON_GHOST } from './ui'
 
 const SEVERITY_STYLE: Record<AuditCheck['severity'], string> = {
@@ -44,6 +45,8 @@ export default function MemoryPanel() {
 
   return (
     <div className="flex min-h-0 flex-col gap-4">
+      <CharacterPanel projectId={truth.projectId} />
+
       <div className="flex items-center gap-3">
         <span className="text-xs text-stone-400">
           已沉淀 {progress} 章记忆 · 角色 {truth.characterMatrix.length} · 待处理线 {truth.pendingHooks.length}

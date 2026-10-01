@@ -8,6 +8,7 @@ import type {
   ImportBriefPayload,
   ImportFieldDiff,
   ParsedTree,
+  RevisionDiffLine,
   ThreadUpdate,
   ValidationReport
 } from '@shared/types'
@@ -477,6 +478,13 @@ export const draftRevision = sqliteTable(
     userPrompt: text('user_prompt').notNull().default(''),
     content: text('content').notNull().default(''),
     wordCount: integer('word_count').notNull().default(0),
+    /** M10：改前 / 改后摘要（各 400 字以内，供「改前改后」对比） */
+    beforeExcerpt: text('before_excerpt').notNull().default(''),
+    afterExcerpt: text('after_excerpt').notNull().default(''),
+    /** M10：段落级 diff（RevisionDiffLine[]） */
+    diff: text('diff', { mode: 'json' }).$type<RevisionDiffLine[]>().notNull().default([]),
+    /** M10：是否已回退到该修订之前的版本 */
+    reverted: integer('reverted', { mode: 'boolean' }).notNull().default(false),
     createdAt: integer('created_at').notNull()
   },
   (t) => [index('draft_revision_project_chapter_idx').on(t.projectId, t.chapterNo)]
@@ -505,6 +513,41 @@ export const embedding = sqliteTable(
     uniqueIndex('embedding_source_uq').on(t.projectId, t.sourceType, t.sourceId, t.chunkIdx),
     index('embedding_project_chapter_idx').on(t.projectId, t.chapterNo)
   ]
+)
+
+/** M10 审计配置（单行，禁止多行） */
+export const auditConfig = sqliteTable('audit_config', {
+  id: integer('id').primaryKey(),
+  /** 被关闭的审计维度（JSON 数组） */
+  disabledDimensions: text('disabled_dimensions', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  /** info | warn | error：低于该严重度的问题不计入不通过 */
+  minSeverity: text('min_severity').notNull().default('warn'),
+  /** warn 级问题是否算不通过 */
+  countWarnAsFail: integer('count_warn_as_fail', { mode: 'boolean' }).notNull().default(false),
+  createdAt: integer('created_at'),
+  updatedAt: integer('updated_at')
+})
+
+/** R7 整本审计任务（断点续跑 + 预估校准） */
+export const auditRun = sqliteTable(
+  'audit_run',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    useModel: integer('use_model', { mode: 'boolean' }).notNull().default(false),
+    /** running | done | failed | aborted */
+    status: text('status').notNull().default('running'),
+    /** 已完成的章节序号（用于断点续跑） */
+    cursor: integer('cursor').notNull().default(0),
+    total: integer('total').notNull().default(0),
+    estTokens: integer('est_tokens').notNull().default(0),
+    error: text('error').notNull().default(''),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (t) => [index('audit_run_project_idx').on(t.projectId, t.status)]
 )
 
 /** 迁移版本表（schema_version 驱动迁移） */

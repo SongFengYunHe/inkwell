@@ -107,7 +107,14 @@ export function openLibrary(id: string): LibraryInfo {
 
   closeDatabase()
   try {
+    // R2：先把新库打开（含迁移）验证可用，再一次性原子切换 config 指针，
+    // 最后才写 library.json —— library.json 只是元信息，写失败不影响可用性。
     reopen(entry)
+    updateConfig((current) => {
+      current.activeLibraryId = id
+      const target = current.libraries.find((item) => item.id === id)
+      if (target) target.lastOpenedAt = Date.now()
+    })
     writeLibraryFile(entry.path, {
       id: entry.id,
       name: entry.name,
@@ -131,11 +138,6 @@ export function openLibrary(id: string): LibraryInfo {
     throw error
   }
 
-  updateConfig((current) => {
-    current.activeLibraryId = id
-    const target = current.libraries.find((item) => item.id === id)
-    if (target) target.lastOpenedAt = Date.now()
-  })
   return toInfo({ ...entry, lastOpenedAt: Date.now() })
 }
 
@@ -225,6 +227,16 @@ export function locateLibrary(input: { id: string; path: string }): LibraryInfo 
     (item) => item.id !== input.id && resolve(item.path) === target
   )
   if (duplicated) throw new Error(`该目录已登记为书库「${duplicated.name}」，请直接切换过去`)
+
+  // R3：目录里的 library.json 若属于本机另一本书库，直接「定位」过去会把它
+  // 的 id 覆写成当前条目的 id（等于偷走别人的库身份）。这里明确拒绝，
+  // 请用户改用「挂载已有书库」。
+  const meta = readLibraryFile(target)
+  const foreignId =
+    meta?.id && readConfig().libraries.some((item) => item.id === meta.id && item.id !== input.id)
+  if (foreignId) {
+    throw new Error('该目录的 library.json 属于本机另一个已登记的书库，请改用「挂载已有书库」')
+  }
 
   updateConfig((current) => {
     const entry = current.libraries.find((item) => item.id === input.id)

@@ -175,6 +175,11 @@ export default function SearchPalette({ onClose }: { onClose: () => void }) {
         {result && (
           <div className="border-t border-stone-200 px-4 py-2 text-[11px] text-stone-400">
             命中 {result.total} 处 · 模式 {result.mode === 'fts' ? 'FTS5（trigram）' : 'LIKE 回退（短查询）'}
+            {result.notes?.map((note) => (
+              <p key={note} className="mt-1 text-amber-700">
+                {note}
+              </p>
+            ))}
           </div>
         )}
       </div>

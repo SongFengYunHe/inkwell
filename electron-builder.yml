@@ -11,7 +11,8 @@ copyright: Copyright © 2026 Inkwell
 
 directories:
   output: release
-  buildResources: build
+  # R6：图标等构建资源放 resources/（build/ 被 .gitignore 忽略，历史上导致一直没有图标）
+  buildResources: resources
 
 # 自动更新（A4）：打包时生成 latest.yml 与 resources/app-update.yml 供 electron-updater 使用。
 # 真正的上传在 .github/workflows/release.yml 里用 GITHUB_TOKEN 完成。
@@ -65,6 +66,7 @@ win:
     - target: nsis
       arch:
         - x64
+  icon: resources/icon.ico
   artifactName: ${productName}-${version}-${arch}-setup.${ext}
 
 nsis:
@@ -74,5 +76,8 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Inkwell
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico
+  installerHeaderIcon: resources/icon.ico
   # 不做增量包，避免依赖上一次发布产物
   differentialPackage: false

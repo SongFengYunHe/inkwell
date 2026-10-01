@@ -1,9 +1,11 @@
-import type { AuditCheck, AuditReport, ChapterBrief, Project } from '@shared/types'
+import type { AuditCheck, AuditConfig, AuditReport, ChapterBrief, Project } from '@shared/types'
+import { getAuditConfig } from '../db/audit-config-repo'
 import { invokeJson } from '../llm/invoke'
 import { auditIssuesSchema } from '../llm/schemas'
 import { buildAuditMessages } from '../prompts/zh-CN'
 import { buildTruthSnapshot } from './truth'
 import { FILLER_PHRASES, detectParallelism } from './rules'
+import { auditStyleDeterministic } from './style-audit'
 
 /** 把文本切成段落（忽略空行） */
 function paragraphsOf(text: string): string[] {
@@ -232,6 +234,61 @@ export function deterministicAudit(
   return checks
 }
 
+/* ---------------------- M10：审计配置（维度开关 / 严重度闸门） ---------------------- */
+
+const SEVERITY_RANK: Record<AuditCheck['severity'], number> = { info: 0, warn: 1, error: 2 }
+
+/**
+ * 某维度是否被配置关闭。
+ * 除精确匹配外，支持用「语义」关闭全部语义维度（各语义维度形如 `语义·OOC 出戏`）。
+ */
+export function isDimensionDisabled(dimension: string, disabledDimensions: string[]): boolean {
+  return disabledDimensions.some((disabled) => {
+    if (!disabled) return false
+    if (disabled === dimension) return true
+    if (dimension.startsWith(disabled + '·')) return true
+    return disabled === '语义' && dimension.startsWith('语义')
+  })
+}
+
+/** 按配置过滤掉被关闭的维度（返回新数组；无关闭项时原样返回） */
+export function filterDisabledChecks(checks: AuditCheck[], config: AuditConfig): AuditCheck[] {
+  if (config.disabledDimensions.length === 0) return checks
+  return checks.filter((check) => !isDimensionDisabled(check.dimension, config.disabledDimensions))
+}
+
+export interface AuditVerdict {
+  /** 是否算「不通过」：仅统计达到闸门的失败项 */
+  passed: boolean
+  /** 0–100 的评分 */
+  score: number
+  /** 计入不通过的失败项数量 */
+  failing: number
+}
+
+/**
+ * 按配置计算「是否不通过」与评分：
+ * - 低于 minSeverity 的问题（默认 info）既不参与评分，也不算不通过；
+ * - countWarnAsFail=false 时 warn 不计入不通过闸门（但仍会拉低评分，评分反映真实缺陷密度）；
+ * - countWarnAsFail=true 时 warn 与 error 一样会导致不通过。
+ */
+export function evaluateAudit(checks: AuditCheck[], config: AuditConfig): AuditVerdict {
+  const floor = SEVERITY_RANK[config.minSeverity]
+  const softFails = checks.filter((check) => !check.passed && SEVERITY_RANK[check.severity] >= floor).length
+  const failing = checks.filter((check) => {
+    if (check.passed) return false
+    if (SEVERITY_RANK[check.severity] < floor) return false
+    if (check.severity === 'warn' && !config.countWarnAsFail) return false
+    return true
+  }).length
+
+  return {
+    passed: failing === 0,
+    score: checks.length === 0 ? 0 : Math.round(((checks.length - softFails) / checks.length) * 100),
+    failing
+  }
+}
+
 export interface AuditInput {
   project: Project
   brief: ChapterBrief | null
@@ -284,8 +341,10 @@ async function modelAudit(input: AuditInput): Promise<AuditCheck[]> {
   }
 }
 
-/** 完整审计：13 个确定性维度 + 可选的语义维度 */
+/** 完整审计：14 个确定性维度 + 可选的语义维度（结果会按 audit_config 过滤与判定） */
 export async function auditChapter(input: AuditInput): Promise<AuditReport> {
+  const chapterNo = input.brief?.chapterNo ?? 0
+  const config = getAuditConfig()
   const checks = deterministicAudit(input.project, input.brief, input.content, input.previousContent)
   const semantic = await modelAudit(input)
   const modelAssisted = input.useModel === true
@@ -300,15 +359,21 @@ export async function auditChapter(input: AuditInput): Promise<AuditReport> {
   }
   checks.push(...semantic)
 
-  const failedErrors = checks.filter((check) => !check.passed && check.severity === 'error').length
-  const passedCount = checks.filter((check) => check.passed).length
+  // M10 §4.2：过滤被关闭的维度，再按严重度闸门重算「是否不通过 / 评分」
+  const visible = filterDisabledChecks(checks, config)
+  const verdict = evaluateAudit(visible, config)
+
+  // M10 §4.1：附上本章文风贴合度（尚未生成画像时给与题材无关的通用基线分）
+  const style = auditStyleDeterministic({ projectId: input.project.id, chapterNo })
 
   return {
-    chapterNo: input.brief?.chapterNo ?? 0,
-    passed: failedErrors === 0,
-    score: checks.length === 0 ? 0 : Math.round((passedCount / checks.length) * 100),
-    checks,
+    chapterNo,
+    passed: verdict.passed,
+    score: verdict.score,
+    checks: visible,
     modelAssisted,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    styleScore: style.score,
+    styleChecks: style.checks
   }
 }

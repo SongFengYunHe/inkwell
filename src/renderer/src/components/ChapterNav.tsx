@@ -38,7 +38,7 @@ export default function ChapterNav() {
   const nextChapterNo = chapterNos.length === 0 ? 1 : Math.max(...chapterNos) + 1
 
   const statusOf = (chapterNo: number): ChapterStatus => {
-    if (drafts.some((item) => item.chapterNo === chapterNo && item.content.trim())) return 'written'
+    if (drafts.some((item) => item.chapterNo === chapterNo && item.wordCount > 0)) return 'written'
     if (briefs.some((item) => item.chapterNo === chapterNo)) return 'briefed'
     return 'none'
   }

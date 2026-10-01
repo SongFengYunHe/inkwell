@@ -175,13 +175,28 @@ export function search(input: SearchQueryInput): SearchResult {
 
   const mode: 'fts' | 'like' = ftsAvailable() && useFtsMatch(parsed.positives) ? 'fts' : 'like'
 
+  /**
+   * R11：短词（1–2 字）在 trigram 下切不出三元组，只能走 LIKE '%x%' 全表扫描。
+   * 细纲与记忆是小表，正文是大表：先把小表扫完，只有小表命中还不够 limit 时才去扫正文。
+   * 这既保证「短词常见诉求（人名 / 设定词）先被满足」，又避免每次短词检索都全表扫正文。
+   * 走这条捷径时会在 notes 里如实告知用户，不做静默截断。
+   */
+  const shortQuery = mode === 'like' && parsed.positives.some((term) => term.length < 3)
+  const sourceOrder: SearchSource[] = shortQuery ? ['brief', 'memory', 'draft'] : SOURCES
+  const notes: string[] = []
+
   const collected: Array<RawHit & { source: SearchSource }> = []
-  for (const source of SOURCES) {
+  for (const source of sourceOrder) {
     const hits =
       mode === 'fts'
         ? searchFts(source, buildFtsMatch(parsed.positives, parsed.exclusions), input.projectId, PER_SOURCE_CAP)
         : searchLikeSource(source, parsed, input.projectId, PER_SOURCE_CAP)
     for (const hit of hits) collected.push({ ...hit, source })
+
+    if (shortQuery && source !== 'draft' && collected.length >= limit) {
+      notes.push('短词检索已优先返回「细纲 / 记忆」的命中；正文命中仅在两者不足时补充。')
+      break
+    }
   }
 
   collected.sort((a, b) => {
@@ -212,5 +227,11 @@ export function search(input: SearchQueryInput): SearchResult {
     group.hits.push(searchHit)
   }
 
-  return { query: raw, mode, groups, total: groups.reduce((sum, group) => sum + group.hits.length, 0) }
+  return {
+    query: raw,
+    mode,
+    groups,
+    total: groups.reduce((sum, group) => sum + group.hits.length, 0),
+    ...(notes.length > 0 ? { notes } : {})
+  }
 }

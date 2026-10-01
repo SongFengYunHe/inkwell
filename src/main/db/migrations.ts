@@ -472,5 +472,47 @@ export const migrations: Migration[] = [
           CAST(strftime('%s', 'now') AS INTEGER) * 1000
         FROM chapter_brief WHERE deleted_at IS NULL`
     ]
+  },
+  {
+    version: 9,
+    name: 'audit_config_revision_diff_audit_run',
+    // M10（质量闭环）+ R7（整本审计断点续跑）：
+    //   audit_config  —— 审计维度开关 / 严重度阈值 / warn 是否算不通过（单行 JSON）
+    //   draft_revision 增列 —— 改前改后摘要、段落级 diff、是否已回退
+    //   audit_run     —— 整本审计任务落库，支持从断点继续与 token 预估校准
+    statements: [
+      // ---------- M10：审计配置（单行） ----------
+      `CREATE TABLE audit_config (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        disabled_dimensions TEXT NOT NULL DEFAULT '[]',
+        min_severity TEXT NOT NULL DEFAULT 'warn',
+        count_warn_as_fail INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER,
+        updated_at INTEGER
+      )`,
+      `INSERT INTO audit_config (id, disabled_dimensions, min_severity, count_warn_as_fail, created_at, updated_at)
+        VALUES (1, '[]', 'warn', 0, CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000)`,
+
+      // ---------- M10：修订可视化与回退 ----------
+      `ALTER TABLE draft_revision ADD COLUMN before_excerpt TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE draft_revision ADD COLUMN after_excerpt TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE draft_revision ADD COLUMN diff TEXT NOT NULL DEFAULT '[]'`,
+      `ALTER TABLE draft_revision ADD COLUMN reverted INTEGER NOT NULL DEFAULT 0`,
+
+      // ---------- R7：整本审计任务（断点续跑 + 预估校准） ----------
+      `CREATE TABLE audit_run (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+        use_model INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'running',
+        cursor INTEGER NOT NULL DEFAULT 0,
+        total INTEGER NOT NULL DEFAULT 0,
+        est_tokens INTEGER NOT NULL DEFAULT 0,
+        error TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+      `CREATE INDEX audit_run_project_idx ON audit_run (project_id, status)`
+    ]
   }
 ]

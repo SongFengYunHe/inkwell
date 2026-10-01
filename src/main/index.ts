@@ -14,9 +14,12 @@ import { runSmokeM6 } from './smoke-m6'
 import { runSmokeM7 } from './smoke-m7'
 import { runSmokeM8 } from './smoke-m8'
 import { runSmokeM9 } from './smoke-m9'
+import { runSmokeM10 } from './smoke-m10'
+import { runSmokeM11 } from './smoke-m11'
 import { bootstrapLibraries } from './library/registry'
 import { autoBackupEnabled, createBackup } from './db/backup'
 import { cleanupExpiredTrash } from './db/trash'
+import { pruneImportSessions } from './import/session'
 import { gracefulShutdown, isQuitting, registerInterval } from './lifecycle'
 import { initAutoUpdate } from './update'
 
@@ -30,6 +33,8 @@ const isM6SmokeRun = process.argv.includes('--smoke-m6')
 const isM7SmokeRun = process.argv.includes('--smoke-m7')
 const isM8SmokeRun = process.argv.includes('--smoke-m8')
 const isM9SmokeRun = process.argv.includes('--smoke-m9')
+const isM10SmokeRun = process.argv.includes('--smoke-m10')
+const isM11SmokeRun = process.argv.includes('--smoke-m11')
 
 const isAnySmokeRun =
   isSmokeRun ||
@@ -41,7 +46,9 @@ const isAnySmokeRun =
   isM6SmokeRun ||
   isM7SmokeRun ||
   isM8SmokeRun ||
-  isM9SmokeRun
+  isM9SmokeRun ||
+  isM10SmokeRun ||
+  isM11SmokeRun
 
 // 冒烟自检使用独立目录，且不做书库引导（沿用固定库路径）
 if (isAnySmokeRun) {
@@ -84,7 +91,7 @@ function createWindow(): void {
 
 /** 启动后的后台维护：自动备份轮转 + 回收站到期清理 */
 function scheduleMaintenance(): void {
-  // 回收站到期清理：启动后 20s 跑一次，之后每天一次
+  // 回收站到期清理 + 导入暂存清理：启动后 20s 跑一次，之后每天一次
   setTimeout(() => {
     if (isQuitting()) return
     try {
@@ -92,6 +99,15 @@ function scheduleMaintenance(): void {
       if (removed > 0) console.log(`[inkwell] purged ${removed} expired trash item(s)`)
     } catch (error) {
       console.error('[inkwell] trash cleanup failed:', error)
+    }
+    // R5：导入暂存此前只在「导入动作」里清理，长期不用导入的用户会一直留着旧会话
+    try {
+      if (isDatabaseOpen()) {
+        const pruned = pruneImportSessions()
+        if (pruned > 0) console.log(`[inkwell] pruned ${pruned} expired import session(s)`)
+      }
+    } catch (error) {
+      console.error('[inkwell] import session cleanup failed:', error)
     }
   }, 20_000).unref?.()
 
@@ -134,6 +150,8 @@ app.whenReady().then(() => {
     if (isM7SmokeRun) return void runSmokeM7()
     if (isM8SmokeRun) return void runSmokeM8()
     if (isM9SmokeRun) return void runSmokeM9()
+    if (isM10SmokeRun) return void runSmokeM10()
+    if (isM11SmokeRun) return void runSmokeM11()
     return
   }
 
@@ -172,6 +190,10 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  // 自检运行期间不要因为「临时窗口（例如 PDF 导出用的隐藏窗口）被销毁」而退出：
+  // 自检自己用 app.exit(0/1) 收尾，这里一旦 app.quit 就会把数据库关掉，
+  // 后续清理逻辑会以「数据库尚未初始化」失败。
+  if (isAnySmokeRun) return
   if (process.platform !== 'darwin') app.quit()
 })
 

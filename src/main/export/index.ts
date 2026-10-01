@@ -2,18 +2,32 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ExportFile, ExportFormat, ExportInput, ExportResult, Project } from '@shared/types'
 import { getProject, listBriefs, listDrafts } from '../db/repositories'
+import { volumeTitles } from '../db/volume-repo'
 import { buildZip } from './zip'
 
-interface ExportChapter {
+export interface ExportChapter {
   chapterNo: number
   title: string
   volumeIdx: number
   content: string
 }
 
-interface ExportVolume {
+export interface ExportVolume {
   index: number
+  /** R9：优先用户写的卷名，缺省回退「第 N 卷」 */
+  title: string
+  /** 用户是否真的写过卷名（决定单卷成书时是否也显示卷标题） */
+  named: boolean
   chapters: ExportChapter[]
+}
+
+/** 成书装配结果（TXT / MD / DOCX / EPUB / PDF 共用） */
+export interface CollectedBook {
+  project: Project
+  volumes: ExportVolume[]
+  /** 有细纲但没有正文、被跳过的章节号 */
+  skipped: number[]
+  totalChars: number
 }
 
 /* -------------------------------- 通用工具 -------------------------------- */
@@ -49,8 +63,11 @@ function countChars(text: string): number {
   return text.replace(/\s/g, '').length
 }
 
-/** 汇总项目正文：按章聚合 → 按卷分组 */
-function collectBook(project: Project): { volumes: ExportVolume[]; skipped: number[]; totalChars: number } {
+/** 汇总项目正文：按章聚合 → 按卷分组（导出各格式共用的装配逻辑） */
+export function collectBook(projectId: number): CollectedBook {
+  const project = getProject(projectId)
+  if (!project) throw new Error(`项目不存在：${projectId}`)
+
   const drafts = listDrafts(project.id)
   const briefs = listBriefs(project.id)
   const briefMap = new Map(briefs.map((brief) => [brief.chapterNo, brief]))
@@ -79,11 +96,19 @@ function collectBook(project: Project): { volumes: ExportVolume[]; skipped: numb
     })
   }
 
+  // R9：卷标题优先用用户填的卷名（「第一卷 山雨」），没填才回退「第 N 卷」
+  const titles = volumeTitles(project.id)
   const volumeMap = new Map<number, ExportVolume>()
   for (const chapter of chapters) {
     let volume = volumeMap.get(chapter.volumeIdx)
     if (!volume) {
-      volume = { index: chapter.volumeIdx, chapters: [] }
+      const customTitle = titles.get(chapter.volumeIdx)
+      volume = {
+        index: chapter.volumeIdx,
+        title: customTitle ?? `第 ${chapter.volumeIdx} 卷`,
+        named: Boolean(customTitle),
+        chapters: []
+      }
       volumeMap.set(chapter.volumeIdx, volume)
     }
     volume.chapters.push(chapter)
@@ -91,7 +116,12 @@ function collectBook(project: Project): { volumes: ExportVolume[]; skipped: numb
 
   const volumes = [...volumeMap.values()].sort((a, b) => a.index - b.index)
   const totalChars = chapters.reduce((sum, chapter) => sum + countChars(chapter.content), 0)
-  return { volumes, skipped, totalChars }
+  return { project, volumes, skipped, totalChars }
+}
+
+/** 卷标题是否写进成书：多卷必写，单卷仅当用户自己写了卷名 */
+export function volumeHeading(volume: ExportVolume, volumeCount: number): string | null {
+  return volumeCount > 1 || volume.named ? volume.title : null
 }
 
 /* ---------------------------------- TXT ---------------------------------- */
@@ -99,7 +129,8 @@ function collectBook(project: Project): { volumes: ExportVolume[]; skipped: numb
 function buildTxt(project: Project, volumes: ExportVolume[]): string {
   const lines: string[] = [project.name, `题材：${project.genre || '未设置'}`, '']
   for (const volume of volumes) {
-    if (volumes.length > 1) lines.push(`第 ${volume.index} 卷`, '')
+    const heading = volumeHeading(volume, volumes.length)
+    if (heading) lines.push(heading, '')
     for (const chapter of volume.chapters) {
       lines.push(`第 ${chapter.chapterNo} 章　${chapter.title}`, '', chapter.content.trim(), '')
     }
@@ -117,8 +148,9 @@ function buildMd(project: Project, volumes: ExportVolume[], totalChars: number, 
 
   lines.push('## 目录', '')
   for (const volume of volumes) {
-    if (volumes.length > 1) lines.push(`- **第 ${volume.index} 卷**`)
-    const indent = volumes.length > 1 ? '  ' : ''
+    const heading = volumeHeading(volume, volumes.length)
+    if (heading) lines.push(`- **${heading}**`)
+    const indent = heading ? '  ' : ''
     for (const chapter of volume.chapters) {
       lines.push(`${indent}- 第 ${chapter.chapterNo} 章 ${chapter.title}`)
     }
@@ -126,7 +158,8 @@ function buildMd(project: Project, volumes: ExportVolume[], totalChars: number, 
   lines.push('')
 
   for (const volume of volumes) {
-    if (volumes.length > 1) lines.push(`## 第 ${volume.index} 卷`, '')
+    const heading = volumeHeading(volume, volumes.length)
+    if (heading) lines.push(`## ${heading}`, '')
     for (const chapter of volume.chapters) {
       lines.push(`### 第 ${chapter.chapterNo} 章 ${chapter.title}`, '')
       lines.push(...toParagraphs(chapter.content))
@@ -152,7 +185,8 @@ function buildDocx(project: Project, volumes: ExportVolume[]): Buffer {
   if (project.genre) body.push(docxParagraph(`题材：${project.genre}`, { size: 20, center: true }))
 
   for (const volume of volumes) {
-    if (volumes.length > 1) body.push(docxParagraph(`第 ${volume.index} 卷`, { bold: true, size: 32 }))
+    const heading = volumeHeading(volume, volumes.length)
+    if (heading) body.push(docxParagraph(heading, { bold: true, size: 32 }))
     for (const chapter of volume.chapters) {
       body.push(docxParagraph(`第 ${chapter.chapterNo} 章　${chapter.title}`, { bold: true, size: 28 }))
       for (const paragraph of toParagraphs(chapter.content)) {
@@ -286,11 +320,9 @@ ${project.genre ? `<dc:subject>${escapeXml(project.genre)}</dc:subject>` : ''}
  * 只导出有正文的章节；缺章会在 `skippedChapters` 里返回。
  */
 export async function exportProject(input: ExportInput, defaultDir: string): Promise<ExportResult> {
-  const project = getProject(input.projectId)
-  if (!project) throw new Error(`项目不存在：${input.projectId}`)
   if (input.formats.length === 0) throw new Error('至少选择一种导出格式')
 
-  const { volumes, skipped, totalChars } = collectBook(project)
+  const { project, volumes, skipped, totalChars } = collectBook(input.projectId)
   if (volumes.length === 0) throw new Error('还没有任何正文可导出，先写几章吧')
 
   const dir = input.outDir?.trim() || join(defaultDir, safeFileName(project.name))
@@ -320,6 +352,12 @@ export async function exportProject(input: ExportInput, defaultDir: string): Pro
       case 'epub':
         await write('epub', 'epub', buildEpub(project, volumes))
         break
+      case 'pdf': {
+        // 动态引入：PDF 需要隐藏窗口与 Chromium 打印链路，避免主进程启动时就加载
+        const { exportPdf } = await import('./pdf')
+        files.push(...(await exportPdf({ projectId: project.id, outDir: dir })))
+        break
+      }
     }
   }
 
