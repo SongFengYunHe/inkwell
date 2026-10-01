@@ -12,6 +12,8 @@ directories:
 files:
   - out/**/*
   - package.json
+  # 自检用的分层解析样本：体积可忽略，但带上它安装版也能跑 --smoke-m7 自检
+  - src/main/smoke/fixtures/**
   - '!**/*.map'
   - '!**/*.ts'
   - '!**/{.eslintrc,.editorconfig,.gitignore,.gitattributes}'
@@ -24,6 +26,11 @@ files:
   - '!node_modules/better-sqlite3/prebuilds/linux-*'
   - '!node_modules/better-sqlite3/prebuilds/linuxmusl-*'
   - '!node_modules/better-sqlite3/prebuilds/win32-arm64.node'
+  # 体积瘦身：剔除依赖里运行时用不到的文档 / 测试 / 示例 / 源码映射
+  # （运行时只需要 .js / .cjs / .mjs / .json / .node）
+  - '!node_modules/**/{README*,readme*,CHANGELOG*,CHANGES*,HISTORY*,AUTHORS*,CONTRIBUTING*,SECURITY*}.md'
+  - '!node_modules/**/{test,tests,__tests__,__test__,spec,specs,example,examples,docs,doc,benchmark,benchmarks,coverage,.github,.vscode,.idea}/**'
+  - '!node_modules/**/*.{map,flow,coffee,cts,mts}'
 
 # 只保留中英文语言包（默认 55 个，占约 48MB）
 electronLanguages:
