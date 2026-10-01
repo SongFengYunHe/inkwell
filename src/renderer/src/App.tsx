@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import Bookshelf from './pages/Bookshelf'
 import ImportReview from './pages/ImportReview'
 import LibraryManager from './pages/LibraryManager'
@@ -6,6 +6,7 @@ import Settings from './pages/Settings'
 import Workspace from './pages/Workspace'
 import DropZone from './components/DropZone'
 import MigrationWizard from './components/MigrationWizard'
+import SearchPalette from './components/SearchPalette'
 import { useAppStore } from './stores/appStore'
 
 export default function App() {
@@ -28,6 +29,20 @@ export default function App() {
   const importSession = useAppStore((s) => s.importSession)
   const dropImport = useAppStore((s) => s.dropImport)
   const handleImportEvent = useAppStore((s) => s.handleImportEvent)
+
+  /** M8：Ctrl+K 唤起命令面板（检索 + 跳转章节） */
+  const [searchOpen, setSearchOpen] = useState(false)
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setSearchOpen((open) => !open)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   useEffect(() => {
     void loadBootstrap()
@@ -148,6 +163,7 @@ export default function App() {
       {migrationOpen && <MigrationWizard />}
       <DropZone onDropPaths={handleDropPaths} />
       {importSession && <ImportReview />}
+      {searchOpen && <SearchPalette onClose={() => setSearchOpen(false)} />}
     </div>
   )
 }

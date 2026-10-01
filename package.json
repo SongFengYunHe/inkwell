@@ -21,6 +21,7 @@
     "smoke:m5": "electron-vite build && electron . --smoke-m5",
     "smoke:m6": "electron-vite build && electron . --smoke-m6",
     "smoke:m7": "electron-vite build && electron . --smoke-m7",
+    "smoke:m8": "electron-vite build && electron . --smoke-m8",
     "pack:dir": "electron-vite build && electron-builder --win --dir --publish never",
     "dist:win": "electron-vite build && electron-builder --win --publish never"
   },

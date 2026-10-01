@@ -845,6 +845,126 @@ export type ImportEvent =
   | { type: 'done'; session: ImportSession }
   | { type: 'error'; message: string }
 
+/* ============================ M8：检索与统计增强 ============================ */
+
+/** 检索来源：细纲 / 正文 / 记忆 */
+export type SearchSource = 'brief' | 'draft' | 'memory'
+
+/** 单条命中（片段中匹配到的字词用 \u0001 / \u0002 包裹，供 UI 高亮） */
+export interface SearchHit {
+  source: SearchSource
+  projectId: number
+  chapterNo: number
+  snippet: string
+}
+
+/** 按章分组的结果 */
+export interface SearchGroup {
+  projectId: number
+  chapterNo: number
+  hits: SearchHit[]
+}
+
+export interface SearchResult {
+  query: string
+  /** 实际使用的检索模式：fts（≥3 字符）或 like（1~2 字符短查询回退） */
+  mode: 'fts' | 'like'
+  groups: SearchGroup[]
+  total: number
+}
+
+export interface SearchQueryInput {
+  projectId?: number
+  query: string
+  limit?: number
+}
+
+/** 整本审计的单章结果 */
+export interface BookAuditChapterResult {
+  chapterNo: number
+  title: string
+  report: AuditReport
+}
+
+/** 按维度聚合的命中统计 */
+export interface BookAuditDimensionStat {
+  dimension: string
+  /** 该维度的检查次数 */
+  total: number
+  /** 未通过次数（命中数） */
+  failed: number
+}
+
+export interface BookAuditSummary {
+  projectId: number
+  chapters: BookAuditChapterResult[]
+  dimensions: BookAuditDimensionStat[]
+  /** 各章未通过检查数之和 */
+  totalIssues: number
+  modelAssisted: boolean
+  createdAt: number
+}
+
+/** 模型语义审计的 token 预估（供「是否继续」提示） */
+export interface BookAuditEstimate {
+  chapters: number
+  promptTokens: number
+  estTotalTokens: number
+}
+
+export interface BookAuditStartInput {
+  projectId: number
+  useModel?: boolean
+  /** 模型审计需二次确认：不带 confirm 时只返回预估，确认后再带 confirm=true 启动 */
+  confirm?: boolean
+}
+
+export interface BookAuditStartResult {
+  /** 未真正启动（needsConfirm）时为空串 */
+  taskId: string
+  needsConfirm: boolean
+  estimate: BookAuditEstimate | null
+}
+
+export interface BookAuditProgress {
+  chapterNo: number
+  done: number
+  total: number
+  message: string
+}
+
+export type BookAuditEvent =
+  | { taskId: string; type: 'progress'; progress: BookAuditProgress }
+  | { taskId: string; type: 'done'; summary: BookAuditSummary }
+  | { taskId: string; type: 'error'; message: string }
+
+/** 写作目标设置 */
+export interface WritingGoalSettings {
+  dailyWords: number
+  dailyChapters: number
+}
+
+export interface DayStat {
+  /** 本地时区 YYYY-MM-DD */
+  day: string
+  wordsAdded: number
+  chaptersDone: number
+}
+
+export interface StatSummary {
+  today: DayStat
+  goal: WritingGoalSettings
+  /** 连续达标天数（按每日字数目标计算） */
+  streak: number
+  /** 最近 7 天（含今天，按时间升序） */
+  recent: DayStat[]
+}
+
+export interface StatSetGoalInput {
+  dailyWords?: number
+  dailyChapters?: number
+}
+
 /** 预加载脚本向渲染进程暴露的 API 契约 */
 export interface InkwellApi {
   project: {
@@ -1017,6 +1137,21 @@ export interface InkwellApi {
     commit(sessionId: string): Promise<{ committed: number }>
     cancel(sessionId: string): Promise<void>
     onEvent(listener: (event: ImportEvent) => void): () => void
+  }
+  /** M8：全文检索（细纲 / 正文 / 记忆；短查询自动 LIKE 回退） */
+  search: {
+    query(input: SearchQueryInput): Promise<SearchResult>
+  }
+  /** M8：全书一键体检（默认确定性审计；勾选后模型语义审计，需预估确认、可中止） */
+  audit: {
+    book(input: BookAuditStartInput): Promise<BookAuditStartResult>
+    abort(taskId: string): Promise<void>
+    onEvent(listener: (event: BookAuditEvent) => void): () => void
+  }
+  /** M8：写作统计与目标 */
+  stat: {
+    summary(): Promise<StatSummary>
+    setGoal(input: StatSetGoalInput): Promise<StatSummary>
   }
   /** M7：Electron 44 已移除 File.path，拖拽落点必须经 preload 的 webUtils 解析 */
   resolveDropPath(file: File): string

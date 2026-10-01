@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, isNull, sql } from 'drizzle-orm'
 import type {
   BriefSaveInput,
   ChapterBrief,
@@ -11,6 +11,7 @@ import type {
 import { getDb } from './client'
 import { chapterBrief, chapterDraft, project } from './schema'
 import { isQuitting } from '../lifecycle'
+import { addChaptersDone, addWords } from '../stat/tracker'
 
 /** 退出过程中拒绝新的写操作，保证数据落盘一致 */
 function assertWritable(): void {
@@ -192,7 +193,11 @@ export function listDrafts(projectId: number): ChapterDraft[] {
     .all()
 }
 
-/** 保存草稿：按 (projectId, chapterNo, version) 唯一，存在即更新，否则新建 */
+/**
+ * 保存草稿：按 (projectId, chapterNo, version) 唯一，存在即更新，否则新建。
+ * M8：写入后按差值累加写作统计（新增 = +wordCount；更新 = 新 − 旧，可为负）；
+ *      若该章此前没有任何非空正文、本次首次产生正文，则「章节完成数」+1。
+ */
 export function saveDraft(input: DraftSaveInput): ChapterDraft {
   assertWritable()
   const db = getDb()
@@ -213,32 +218,51 @@ export function saveDraft(input: DraftSaveInput): ChapterDraft {
 
   const content = input.content ?? existing?.content ?? ''
   const wordCount = countWords(content)
+  const before = existing?.wordCount ?? 0
 
-  if (existing) {
-    const patch = pickDefined(input, DRAFT_IMMUTABLE)
-    return db
-      .update(chapterDraft)
-      .set({ ...patch, content, wordCount, updatedAt: now })
-      .where(eq(chapterDraft.id, existing.id))
-      .returning()
-      .get()
-  }
+  // 「章节首次产生正文」判定：写入前该章是否已有非空正文
+  const nonEmptyBefore =
+    db
+      .select({ value: sql<number>`count(*)` })
+      .from(chapterDraft)
+      .where(
+        and(
+          eq(chapterDraft.projectId, input.projectId),
+          eq(chapterDraft.chapterNo, input.chapterNo),
+          isNull(chapterDraft.deletedAt),
+          gt(chapterDraft.wordCount, 0)
+        )
+      )
+      .get()?.value ?? 0
 
-  return db
-    .insert(chapterDraft)
-    .values({
-      projectId: input.projectId,
-      chapterNo: input.chapterNo,
-      version,
-      status: input.status ?? 'draft',
-      source: input.source ?? 'write',
-      content,
-      wordCount,
-      createdAt: now,
-      updatedAt: now
-    })
-    .returning()
-    .get()
+  const row = existing
+    ? db
+        .update(chapterDraft)
+        .set({ ...pickDefined(input, DRAFT_IMMUTABLE), content, wordCount, updatedAt: now })
+        .where(eq(chapterDraft.id, existing.id))
+        .returning()
+        .get()
+    : db
+        .insert(chapterDraft)
+        .values({
+          projectId: input.projectId,
+          chapterNo: input.chapterNo,
+          version,
+          status: input.status ?? 'draft',
+          source: input.source ?? 'write',
+          content,
+          wordCount,
+          createdAt: now,
+          updatedAt: now
+        })
+        .returning()
+        .get()
+
+  // 记账放在写入成功之后，避免写失败却留下统计
+  addWords(wordCount - before, now)
+  if (wordCount > 0 && nonEmptyBefore === 0) addChaptersDone(1, now)
+
+  return row
 }
 
 export function deleteDraft(id: number): void {

@@ -1,5 +1,7 @@
 import { IpcChannel } from '@shared/ipc'
 import type {
+  BookAuditEvent,
+  BookAuditStartInput,
   BriefExpandInput,
   BriefSaveInput,
   DraftSaveInput,
@@ -22,6 +24,8 @@ import type {
   ProjectUpdateInput,
   ProviderSaveInput,
   RoleRouteSaveInput,
+  SearchQueryInput,
+  StatSetGoalInput,
   WizardEvent,
   WizardStartInput
 } from '@shared/types'
@@ -176,6 +180,24 @@ const api: InkwellApi = {
     }
   },
   resolveDropPath: (file: File) => webUtils.getPathForFile(file),
+  search: {
+    query: (input: SearchQueryInput) => ipcRenderer.invoke(IpcChannel.searchQuery, input)
+  },
+  audit: {
+    book: (input: BookAuditStartInput) => ipcRenderer.invoke(IpcChannel.auditBook, input),
+    abort: (taskId: string) => ipcRenderer.invoke(IpcChannel.auditAbort, { taskId }),
+    onEvent: (listener: (event: BookAuditEvent) => void) => {
+      const handler = (_event: IpcRendererEvent, payload: BookAuditEvent): void => listener(payload)
+      ipcRenderer.on(IpcChannel.auditEvent, handler)
+      return () => {
+        ipcRenderer.removeListener(IpcChannel.auditEvent, handler)
+      }
+    }
+  },
+  stat: {
+    summary: () => ipcRenderer.invoke(IpcChannel.statSummary),
+    setGoal: (input: StatSetGoalInput) => ipcRenderer.invoke(IpcChannel.statSetGoal, input)
+  },
   onMigrationEvent: (listener: (event: MigrationEvent) => void) => {
     const handler = (_event: IpcRendererEvent, payload: MigrationEvent): void => listener(payload)
     ipcRenderer.on(IpcChannel.libraryMigrationEvent, handler)

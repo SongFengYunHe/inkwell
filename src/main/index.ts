@@ -12,6 +12,7 @@ import { runSmokeM4 } from './smoke-m4'
 import { runSmokeM5 } from './smoke-m5'
 import { runSmokeM6 } from './smoke-m6'
 import { runSmokeM7 } from './smoke-m7'
+import { runSmokeM8 } from './smoke-m8'
 import { bootstrapLibraries } from './library/registry'
 import { autoBackupEnabled, createBackup } from './db/backup'
 import { cleanupExpiredTrash } from './db/trash'
@@ -25,6 +26,7 @@ const isM4SmokeRun = process.argv.includes('--smoke-m4')
 const isM5SmokeRun = process.argv.includes('--smoke-m5')
 const isM6SmokeRun = process.argv.includes('--smoke-m6')
 const isM7SmokeRun = process.argv.includes('--smoke-m7')
+const isM8SmokeRun = process.argv.includes('--smoke-m8')
 
 const isAnySmokeRun =
   isSmokeRun ||
@@ -34,7 +36,8 @@ const isAnySmokeRun =
   isM4SmokeRun ||
   isM5SmokeRun ||
   isM6SmokeRun ||
-  isM7SmokeRun
+  isM7SmokeRun ||
+  isM8SmokeRun
 
 // 冒烟自检使用独立目录，且不做书库引导（沿用固定库路径）
 if (isAnySmokeRun) {
@@ -125,6 +128,7 @@ app.whenReady().then(() => {
     if (isM5SmokeRun) return void runSmokeM5()
     if (isM6SmokeRun) return void runSmokeM6()
     if (isM7SmokeRun) return void runSmokeM7()
+    if (isM8SmokeRun) return void runSmokeM8()
     return
   }
 

@@ -1,6 +1,8 @@
 import {
   IpcChannel,
+  auditAbortSchema,
   backupNameSchema,
+  bookAuditSchema,
   briefExpandSchema,
   briefSaveSchema,
   chapterQuerySchema,
@@ -31,12 +33,15 @@ import {
   providerSaveSchema,
   requestIdSchema,
   roleRouteSaveSchema,
+  searchQuerySchema,
+  statSetGoalSchema,
   trashItemSchema,
   wizardStartSchema
 } from '@shared/ipc'
 import { join } from 'node:path'
 import { rmSync } from 'node:fs'
 import type {
+  BookAuditEvent,
   GenerateEvent,
   ImportEvent,
   McpLaunchConfig,
@@ -61,6 +66,7 @@ import {
 import { getLatestReview, saveReview } from '../db/memory-repo'
 import { createRun, latestRun, updateRun } from '../db/pipeline-repo'
 import { auditChapter } from '../engine/audit'
+import { auditBook, estimateBookAudit } from '../engine/audit-book'
 import { fixChapter } from '../engine/fix'
 import { getTruthFiles } from '../engine/truth'
 import { rebuildMemory } from '../engine/pipeline'
@@ -108,12 +114,17 @@ import {
   switchLibrary
 } from '../library/registry'
 import { registerAborter, registerCleanup, unregisterAborter } from '../lifecycle'
+import { search } from '../search/query'
+import { getStatSummary, setGoal } from '../stat/goal'
 
 /** 正在进行的可中断任务，key 为渲染进程生成的 requestId */
 const activeJobs = new Map<string, AbortController>()
 
 /** 连写请求 id 集合（退出时统一中断，保证断点写回） */
 const activePipelineIds = new Set<string>()
+
+/** M8：整本审计任务（可中止），key 为 taskId */
+const activeAuditTasks = new Map<string, AbortController>()
 
 /** 长任务的失败信息统一格式化 */
 function jobErrorMessage(error: unknown, aborted: boolean): string {
@@ -131,6 +142,8 @@ export function registerIpcHandlers(): void {
   registerCleanup(() => {
     for (const requestId of activePipelineIds) abortPipeline(requestId)
     activePipelineIds.clear()
+    for (const controller of activeAuditTasks.values()) controller.abort()
+    activeAuditTasks.clear()
   })
 
   /* --------------------------------- 项目 --------------------------------- */
@@ -581,5 +594,60 @@ export function registerIpcHandlers(): void {
   )
   ipcMain.handle(IpcChannel.importCancel, (_event, id: unknown) => {
     cancelSession(importCommitSchema.shape.sessionId.parse(id))
+  })
+
+  /* ============================== M8：检索与统计 ============================== */
+
+  ipcMain.handle(IpcChannel.searchQuery, (_event, raw: unknown) => search(searchQuerySchema.parse(raw)))
+
+  ipcMain.handle(IpcChannel.statSummary, () => getStatSummary())
+  ipcMain.handle(IpcChannel.statSetGoal, (_event, raw: unknown) => {
+    setGoal(statSetGoalSchema.parse(raw))
+    return getStatSummary()
+  })
+
+  ipcMain.handle(IpcChannel.auditBook, (event, raw: unknown) => {
+    const input = bookAuditSchema.parse(raw)
+    const useModel = input.useModel === true
+    // 模型语义审计必须先给 token 预估并二次确认（避免「整本审计烧 token」）
+    if (useModel && input.confirm !== true) {
+      return { taskId: '', needsConfirm: true, estimate: estimateBookAudit(input.projectId) }
+    }
+
+    const taskId = `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const controller = new AbortController()
+    activeAuditTasks.set(taskId, controller)
+    registerAborter(controller)
+    const sender = event.sender
+
+    // 推迟到下一轮事件循环启动，确保 IPC 先把 {taskId} 返回给渲染进程
+    setTimeout(() => {
+      void (async () => {
+        try {
+          const summary = await auditBook({
+            projectId: input.projectId,
+            useModel,
+            signal: controller.signal,
+            onProgress: (progress) =>
+              emit<BookAuditEvent>(sender, IpcChannel.auditEvent, { taskId, type: 'progress', progress })
+          })
+          emit<BookAuditEvent>(sender, IpcChannel.auditEvent, { taskId, type: 'done', summary })
+        } catch (error) {
+          emit<BookAuditEvent>(sender, IpcChannel.auditEvent, {
+            taskId,
+            type: 'error',
+            message: jobErrorMessage(error, controller.signal.aborted)
+          })
+        } finally {
+          activeAuditTasks.delete(taskId)
+          unregisterAborter(controller)
+        }
+      })()
+    }, 0).unref?.()
+
+    return { taskId, needsConfirm: false, estimate: null }
+  })
+  ipcMain.handle(IpcChannel.auditAbort, (_event, raw: unknown) => {
+    activeAuditTasks.get(auditAbortSchema.parse(raw).taskId)?.abort()
   })
 }

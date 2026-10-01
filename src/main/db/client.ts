@@ -49,6 +49,15 @@ export function getDb(): InkwellDatabase {
   return db
 }
 
+/**
+ * 获取底层 better-sqlite3 连接。
+ * drizzle 不支持 FTS5 的 MATCH / snippet 语法，检索模块（search/fts.ts）需要原生 SQL。
+ */
+export function getRawSqlite(): Database.Database {
+  if (!sqlite) throw new Error('数据库尚未初始化，请先调用 initDatabase()')
+  return sqlite
+}
+
 /** 数据库文件绝对路径 */
 export function getDatabasePath(): string {
   return databasePath

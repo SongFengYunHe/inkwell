@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { PasteImportDialog } from '../components/DropZone'
+import GoalWidget from '../components/GoalWidget'
 import ThemeToggle from '../components/ThemeToggle'
 import { GENRE_TEMPLATES, findGenreTemplate } from '../data/genres'
 import { useAppStore } from '../stores/appStore'
@@ -14,12 +15,18 @@ export default function Bookshelf() {
   const setView = useAppStore((s) => s.setView)
   const dropImport = useAppStore((s) => s.dropImport)
   const createProjectFromImport = useAppStore((s) => s.createProjectFromImport)
+  const stat = useAppStore((s) => s.stat)
+  const loadStat = useAppStore((s) => s.loadStat)
 
   const [name, setName] = useState('')
   const [genre, setGenre] = useState(GENRE_TEMPLATES[0].name)
   const [totalChapters, setTotalChapters] = useState(GENRE_TEMPLATES[0].chapters)
   const [premise, setPremise] = useState('')
   const [pasteOpen, setPasteOpen] = useState(false)
+
+  useEffect(() => {
+    void loadStat()
+  }, [loadStat])
 
   const handlePickFile = async (): Promise<void> => {
     const path = await window.inkwell.app.pickFile()
@@ -56,6 +63,11 @@ export default function Bookshelf() {
           <h1 className="text-2xl font-semibold tracking-tight">书架</h1>
           <p className="mt-1 text-sm text-stone-500">只需一句话灵感，即可开始一部长篇。</p>
         </div>
+        {stat && stat.streak > 0 && (
+          <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-700">
+            🔥 连续达标 {stat.streak} 天
+          </span>
+        )}
         <div className="flex items-center gap-2">
           <span className="mr-1 text-xs text-stone-400">{loading ? '加载中…' : `共 ${projects.length} 个项目`}</span>
           <button
@@ -194,6 +206,7 @@ export default function Bookshelf() {
                       {project.premise || '（暂无一句话灵感）'}
                     </p>
                   </div>
+                  <GoalWidget />
                   <div className="flex items-center justify-between text-xs text-stone-400">
                     <span className="rounded bg-stone-100 px-2 py-0.5 text-stone-600">{project.genre || '未设题材'}</span>
                     <span>{project.totalChapters} 章</span>

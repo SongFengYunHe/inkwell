@@ -368,6 +368,55 @@ export const importItem = sqliteTable(
   (t) => [index('import_item_session_idx').on(t.sessionId)]
 )
 
+/* ============================ M8：检索与统计增强 ============================ */
+
+/**
+ * FTS5 虚拟表（DDL 见 migrations.ts v7）。
+ * 这里仅做类型声明，实际写入 / 查询一律走 search/fts.ts 的原生 SQL
+ * （drizzle 不支持 FTS5 的 MATCH / snippet 语法）。
+ */
+export const ftsDraft = sqliteTable('fts_draft', {
+  rowid: integer('rowid'),
+  content: text('content').notNull().default(''),
+  chapterNo: integer('chapter_no').notNull().default(0),
+  projectId: integer('project_id').notNull().default(0)
+})
+
+export const ftsBrief = sqliteTable('fts_brief', {
+  rowid: integer('rowid'),
+  title: text('title').notNull().default(''),
+  purpose: text('purpose').notNull().default(''),
+  keyEvents: text('key_events').notNull().default(''),
+  characters: text('characters').notNull().default(''),
+  suspenseHook: text('suspense_hook').notNull().default(''),
+  sceneBeats: text('scene_beats').notNull().default(''),
+  chapterNo: integer('chapter_no').notNull().default(0),
+  projectId: integer('project_id').notNull().default(0)
+})
+
+export const ftsMemory = sqliteTable('fts_memory', {
+  rowid: integer('rowid'),
+  summary: text('summary').notNull().default(''),
+  chapterNo: integer('chapter_no').notNull().default(0),
+  projectId: integer('project_id').notNull().default(0)
+})
+
+/** 写作统计（按天，本地时区 YYYY-MM-DD 为主键） */
+export const writingStat = sqliteTable('writing_stat', {
+  day: text('day').primaryKey(),
+  wordsAdded: integer('words_added').notNull().default(0),
+  chaptersDone: integer('chapters_done').notNull().default(0),
+  updatedAt: integer('updated_at')
+})
+
+/** 写作目标（单行，id 恒为 1） */
+export const writingGoal = sqliteTable('writing_goal', {
+  id: integer('id').primaryKey(),
+  dailyWords: integer('daily_words').notNull().default(3000),
+  dailyChapters: integer('daily_chapters').notNull().default(1),
+  createdAt: integer('created_at')
+})
+
 /** 迁移版本表（schema_version 驱动迁移） */
 export const schemaVersion = sqliteTable('schema_version', {
   version: integer('version').primaryKey(),

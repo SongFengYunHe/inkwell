@@ -95,7 +95,15 @@ export const IpcChannel = {
   importCancel: 'import:cancel',
   importValidate: 'import:validate',
   /** 主进程 → 渲染进程：导入进度推送 */
-  importEvent: 'import:event'
+  importEvent: 'import:event',
+  /** M8：全文检索与统计 */
+  searchQuery: 'search:query',
+  auditBook: 'audit:book',
+  auditAbort: 'audit:abort',
+  /** 主进程 → 渲染进程：整本审计进度推送 */
+  auditEvent: 'audit:event',
+  statSummary: 'stat:summary',
+  statSetGoal: 'stat:set-goal'
 } as const
 
 export type IpcChannelName = (typeof IpcChannel)[keyof typeof IpcChannel]
@@ -317,3 +325,29 @@ export const importValidateSchema = z.object({
   sessionId: z.string().min(1).max(100),
   requiredFields: z.array(briefFieldKeySchema).max(9).optional()
 })
+
+/* ============================ M8：检索与统计增强 ============================ */
+
+export const searchQuerySchema = z.object({
+  /** 缺省表示跨全部项目检索 */
+  projectId: projectIdSchema.optional(),
+  query: z.string().trim().min(1, '请输入检索词').max(200),
+  limit: z.number().int().min(1).max(200).optional()
+})
+
+export const bookAuditSchema = z.object({
+  projectId: projectIdSchema,
+  useModel: z.boolean().optional(),
+  confirm: z.boolean().optional()
+})
+
+export const auditAbortSchema = z.object({ taskId: z.string().min(1).max(100) })
+
+export const statSetGoalSchema = z
+  .object({
+    dailyWords: z.number().int().min(0).max(1_000_000).optional(),
+    dailyChapters: z.number().int().min(0).max(1_000).optional()
+  })
+  .refine((value) => value.dailyWords !== undefined || value.dailyChapters !== undefined, {
+    message: '至少需要设置一项目标'
+  })

@@ -297,5 +297,101 @@ export const migrations: Migration[] = [
       )`,
       `CREATE INDEX import_item_session_idx ON import_item (session_id)`
     ]
+  },
+  {
+    version: 7,
+    name: 'full_text_search_and_writing_stats',
+    // M8：FTS5 全文检索（细纲 / 正文 / 记忆）+ 写作统计与目标。
+    // 说明：CJK 用 FTS5 的 trigram 分词器（SQLite 3.34+，Electron 44 内置已支持）。
+    //       trigram 对 <3 字符的查询无法切词（1~2 字中文命中为 0），应用层会用 LIKE 回退兜底，
+    //       因此这里仍然按规格建三种 FTS 表；短查询的降级逻辑在 src/main/search/query.ts。
+    statements: [
+      // ---------- FTS：正文 ----------
+      `CREATE VIRTUAL TABLE fts_draft USING fts5(
+        content, chapter_no UNINDEXED, project_id UNINDEXED,
+        tokenize='trigram'
+      )`,
+      // ---------- FTS：细纲 ----------
+      `CREATE VIRTUAL TABLE fts_brief USING fts5(
+        title, purpose, key_events, characters, suspense_hook, scene_beats,
+        chapter_no UNINDEXED, project_id UNINDEXED,
+        tokenize='trigram'
+      )`,
+      // ---------- FTS：章节记忆 ----------
+      `CREATE VIRTUAL TABLE fts_memory USING fts5(
+        summary, chapter_no UNINDEXED, project_id UNINDEXED,
+        tokenize='trigram'
+      )`,
+
+      // ---------- 触发器：正文（软删除时必须从 FTS 移除） ----------
+      `CREATE TRIGGER fts_draft_ai AFTER INSERT ON chapter_draft BEGIN
+        INSERT INTO fts_draft(rowid, content, chapter_no, project_id)
+        VALUES (new.id, new.content, new.chapter_no, new.project_id);
+      END`,
+      `CREATE TRIGGER fts_draft_ad AFTER DELETE ON chapter_draft BEGIN
+        DELETE FROM fts_draft WHERE rowid = old.id;
+      END`,
+      `CREATE TRIGGER fts_draft_au AFTER UPDATE ON chapter_draft BEGIN
+        DELETE FROM fts_draft WHERE rowid = old.id;
+        INSERT INTO fts_draft(rowid, content, chapter_no, project_id)
+        SELECT new.id, new.content, new.chapter_no, new.project_id WHERE new.deleted_at IS NULL;
+      END`,
+
+      // ---------- 触发器：细纲 ----------
+      `CREATE TRIGGER fts_brief_ai AFTER INSERT ON chapter_brief BEGIN
+        INSERT INTO fts_brief(rowid, title, purpose, key_events, characters, suspense_hook, scene_beats, chapter_no, project_id)
+        VALUES (new.id, new.title, new.purpose, new.key_events, new.characters, new.suspense_hook, new.scene_beats, new.chapter_no, new.project_id);
+      END`,
+      `CREATE TRIGGER fts_brief_ad AFTER DELETE ON chapter_brief BEGIN
+        DELETE FROM fts_brief WHERE rowid = old.id;
+      END`,
+      `CREATE TRIGGER fts_brief_au AFTER UPDATE ON chapter_brief BEGIN
+        DELETE FROM fts_brief WHERE rowid = old.id;
+        INSERT INTO fts_brief(rowid, title, purpose, key_events, characters, suspense_hook, scene_beats, chapter_no, project_id)
+        SELECT new.id, new.title, new.purpose, new.key_events, new.characters, new.suspense_hook, new.scene_beats, new.chapter_no, new.project_id
+        WHERE new.deleted_at IS NULL;
+      END`,
+
+      // ---------- 触发器：记忆（memory_chapter 无 deleted_at，按自然行为同步） ----------
+      `CREATE TRIGGER fts_memory_ai AFTER INSERT ON memory_chapter BEGIN
+        INSERT INTO fts_memory(rowid, summary, chapter_no, project_id)
+        VALUES (new.id, new.summary, new.chapter_no, new.project_id);
+      END`,
+      `CREATE TRIGGER fts_memory_ad AFTER DELETE ON memory_chapter BEGIN
+        DELETE FROM fts_memory WHERE rowid = old.id;
+      END`,
+      `CREATE TRIGGER fts_memory_au AFTER UPDATE ON memory_chapter BEGIN
+        DELETE FROM fts_memory WHERE rowid = old.id;
+        INSERT INTO fts_memory(rowid, summary, chapter_no, project_id)
+        VALUES (new.id, new.summary, new.chapter_no, new.project_id);
+      END`,
+
+      // ---------- 回填历史数据（否则老用户的存量正文 / 细纲 / 记忆搜不到） ----------
+      `INSERT INTO fts_draft(rowid, content, chapter_no, project_id)
+        SELECT id, content, chapter_no, project_id FROM chapter_draft WHERE deleted_at IS NULL`,
+      `INSERT INTO fts_brief(rowid, title, purpose, key_events, characters, suspense_hook, scene_beats, chapter_no, project_id)
+        SELECT id, title, purpose, key_events, characters, suspense_hook, scene_beats, chapter_no, project_id
+        FROM chapter_brief WHERE deleted_at IS NULL`,
+      `INSERT INTO fts_memory(rowid, summary, chapter_no, project_id)
+        SELECT id, summary, chapter_no, project_id FROM memory_chapter`,
+
+      // ---------- 写作统计（按天，本地时区 YYYY-MM-DD） ----------
+      `CREATE TABLE writing_stat (
+        day TEXT PRIMARY KEY,
+        words_added INTEGER NOT NULL DEFAULT 0,
+        chapters_done INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER
+      )`,
+
+      // ---------- 写作目标（单行，id 恒为 1） ----------
+      `CREATE TABLE writing_goal (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        daily_words INTEGER NOT NULL DEFAULT 3000,
+        daily_chapters INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER
+      )`,
+      `INSERT INTO writing_goal (id, daily_words, daily_chapters, created_at)
+        VALUES (1, 3000, 1, CAST(strftime('%s', 'now') AS INTEGER) * 1000)`
+    ]
   }
 ]

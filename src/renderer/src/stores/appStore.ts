@@ -31,7 +31,9 @@ import type {
   BriefFieldKey,
   ImportEvent,
   ImportSession,
-  ImportUpdateItemInput
+  ImportUpdateItemInput,
+  StatSummary,
+  StatSetGoalInput
 } from '@shared/types'
 import { create } from 'zustand'
 
@@ -117,6 +119,9 @@ interface AppState {
   migrationOpen: boolean
   /** M6：可撤销提示（5 秒） */
   undo: UndoState | null
+
+  /** M8：写作统计（今日进度 / 目标 / 连续达标天数） */
+  stat: StatSummary | null
 
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
@@ -228,6 +233,10 @@ interface AppState {
   closeMigration: () => void
   dismissUndo: () => void
   runUndo: () => Promise<void>
+
+  /* ----------------------------- M8：写作统计 ----------------------------- */
+  loadStat: () => Promise<void>
+  saveGoal: (input: StatSetGoalInput) => Promise<void>
 }
 
 /** 统一收敛错误信息，避免每个动作各写一遍 try/catch */
@@ -279,6 +288,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   undo: null,
   importSession: null,
   importProgress: null,
+  stat: null,
 
   setTheme: (theme) => {
     localStorage.setItem(THEME_KEY, theme)
@@ -947,5 +957,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!undo) return
     set({ undo: null })
     await guard(set, undo.run)
+  },
+
+  /* ----------------------------- M8：写作统计 ----------------------------- */
+
+  loadStat: async () => {
+    const summary = await guard(set, () => window.inkwell.stat.summary())
+    if (summary) set({ stat: summary })
+  },
+
+  saveGoal: async (input) => {
+    const summary = await guard(set, () => window.inkwell.stat.setGoal(input))
+    if (summary) set({ stat: summary })
   }
 }))

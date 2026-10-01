@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { PasteImportDialog } from '../components/DropZone'
+import BookAuditPanel from '../components/BookAuditPanel'
 import BriefPanel from '../components/BriefPanel'
 import ChapterNav from '../components/ChapterNav'
 import DraftPanel from '../components/DraftPanel'
@@ -35,6 +36,7 @@ export default function Workspace() {
   const [tab, setTab] = useState<Tab>('brief')
   const [exportOpen, setExportOpen] = useState(false)
   const [pasteOpen, setPasteOpen] = useState(false)
+  const [auditOpen, setAuditOpen] = useState(false)
   const openImportReview = useAppStore((s) => s.openImportReview)
 
   const project = projects.find((item) => item.id === activeProjectId) ?? null
@@ -89,6 +91,13 @@ export default function Workspace() {
         <div className="ml-auto flex items-center gap-3">
           <span className="text-xs text-stone-400">{loading ? '处理中…' : ''}</span>
           <ThemeToggle />
+          <button
+            type="button"
+            onClick={() => setAuditOpen(true)}
+            className="rounded-lg border border-stone-200 px-3 py-1.5 text-sm text-stone-600 transition hover:bg-stone-50"
+          >
+            全书体检
+          </button>
           <button
             type="button"
             onClick={() => setExportOpen(true)}
@@ -170,6 +179,7 @@ export default function Workspace() {
       </div>
 
       {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} />}
+      {auditOpen && <BookAuditPanel projectId={project.id} onClose={() => setAuditOpen(false)} />}
       {pasteOpen && (
         <PasteImportDialog
           onClose={() => setPasteOpen(false)}
