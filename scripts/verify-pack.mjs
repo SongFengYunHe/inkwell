@@ -116,7 +116,16 @@ if (existsSync(EXE)) {
       }
     }
   } finally {
-    rmSync(runDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
+    // 清理是尽力而为：Windows 上刚退出的 Electron 进程可能仍短暂持有 app.asar 句柄，
+    // 删除会报 EPERM。此时**所有断言其实都已跑完**，绝不能因此把探针判负（假失败）。
+    try {
+      rmSync(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 })
+    } catch (error) {
+      console.warn(
+        '[verify:pack] 临时目录清理失败（不影响探针结论）：' +
+          (error instanceof Error ? error.message : String(error))
+      )
+    }
   }
 }
 
