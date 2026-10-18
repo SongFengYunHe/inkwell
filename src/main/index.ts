@@ -17,6 +17,7 @@ import { runSmokeM9 } from './smoke-m9'
 import { runSmokeM10 } from './smoke-m10'
 import { runSmokeM11 } from './smoke-m11'
 import { bootstrapLibraries } from './library/registry'
+import { initIndexQueue } from './search/index-queue'
 import { autoBackupEnabled, createBackup } from './db/backup'
 import { cleanupExpiredTrash } from './db/trash'
 import { pruneImportSessions } from './import/session'
@@ -179,6 +180,8 @@ app.whenReady().then(() => {
   }
 
   scheduleMaintenance()
+  // M12-C：启动后延迟排空向量索引队列（空闲时执行，可暂停）
+  if (isDatabaseOpen()) initIndexQueue()
   registerIpcHandlers()
   createWindow()
   // A4：挂上自动更新（仅打包版生效；开发模式直接标记 unsupported）

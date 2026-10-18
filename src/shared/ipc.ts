@@ -325,6 +325,7 @@ export const librarySettingsSchema = z.object({
   cleanCacheOnQuit: z.boolean().optional(),
   autoBackup: z.boolean().optional(),
   ragSearch: z.boolean().optional(),
+  vectorIndexPaused: z.boolean().optional(),
   autoUpdate: z.boolean().optional()
 })
 

@@ -742,6 +742,8 @@ export interface LibrarySettings {
   autoBackup: boolean
   /** A3：写作时用向量检索召回相关回忆（默认关闭：会消耗 embedding 额度） */
   ragSearch: boolean
+  /** M12-C：暂停后台向量索引队列（暂停期间正文变更仍会入队，恢复后继续处理） */
+  vectorIndexPaused: boolean
   /** A4：启动后自动检查更新（默认开启，只检查不自动安装） */
   autoUpdate: boolean
 }
@@ -1124,6 +1126,10 @@ export interface VectorIndexStatus {
   enabled: boolean
   chapters: number
   chunks: number
+  /** M12-C：待索引（排队中）的章节数 */
+  pending: number
+  /** M12-C：后台索引队列是否被暂停 */
+  paused: boolean
   dim: number
   model: string
   updatedAt: number | null

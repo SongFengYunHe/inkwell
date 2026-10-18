@@ -1,7 +1,7 @@
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import type { VectorIndexResult, VectorIndexStatus, VectorRecallHit } from '@shared/types'
 import { getDb } from '../db/client'
-import { chapterDraft, embedding } from '../db/schema'
+import { chapterDraft, embedding, embeddingQueue } from '../db/schema'
 import { embedTexts, embedderConfigured } from '../llm/embed'
 import { getSettings } from '../library/registry'
 
@@ -97,11 +97,20 @@ export function indexStatus(projectId: number): VectorIndexStatus {
 
   const chapters = new Set(rows.map((row) => row.chapterNo))
   const latest = rows.reduce((max, row) => Math.max(max, row.createdAt), 0)
+  // M12-C：待索引章节数 = 队列里未完成的工单数
+  const pending =
+    getDb()
+      .select({ value: sql<number>`count(*)` })
+      .from(embeddingQueue)
+      .where(eq(embeddingQueue.projectId, projectId))
+      .get()?.value ?? 0
   return {
     embedderAvailable: embedderConfigured(),
     enabled: getSettings().ragSearch,
+    paused: getSettings().vectorIndexPaused,
     chapters: chapters.size,
     chunks: rows.length,
+    pending,
     dim: rows[0]?.dim ?? 0,
     model: rows[0]?.model ?? '',
     updatedAt: latest > 0 ? latest : null
@@ -110,6 +119,7 @@ export function indexStatus(projectId: number): VectorIndexStatus {
 
 export function clearIndex(projectId: number): void {
   getDb().delete(embedding).where(eq(embedding.projectId, projectId)).run()
+  getDb().delete(embeddingQueue).where(eq(embeddingQueue.projectId, projectId)).run()
 }
 
 /** 索引（或重建）单章：先删旧块，再写入新块 */
@@ -186,6 +196,8 @@ export async function rebuildIndex(
   let skipped = 0
 
   db.delete(embedding).where(eq(embedding.projectId, projectId)).run()
+  // M12-C：全量重建已完成「现在」的索引，清掉排队中的旧工单，避免稍后被重复索引
+  db.delete(embeddingQueue).where(eq(embeddingQueue.projectId, projectId)).run()
 
   for (const draft of ordered) {
     if (!draft.content.trim()) {

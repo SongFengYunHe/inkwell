@@ -5,7 +5,7 @@ import { listSteps, upsertStep } from '../db/pipeline-repo'
 import { buildMessagesFor } from '../prompts/zh-CN'
 import { buildChapterContext } from '../llm/context'
 import { augmentContext } from '../search/recall'
-import { indexChapterDraft } from '../search/vector'
+import { enqueueChapterIndex } from '../search/index-queue'
 import { invokeChat } from '../llm/invoke'
 import { auditChapter } from './audit'
 import { commitMemory } from './memory'
@@ -87,8 +87,8 @@ export async function runChapter(options: RunChapterOptions): Promise<ChapterRes
       source: 'write',
       content: trimmed
     })
-    // A3：连写场景下每章落盘即入索引，后面的章节才能召回它
-    await indexChapterDraft(projectId, chapterNo, draft.id, draft.content, signal)
+    // M12-C：入队即可（后台队列空闲时索引），连写不再为每章阻塞一次 embedding
+    enqueueChapterIndex(projectId, chapterNo, draft.id)
     upsertStep(runId, chapterNo, 'draft', true)
   }
 

@@ -35,6 +35,8 @@ export const DEFAULT_SETTINGS: LibrarySettings = {
   autoBackup: true,
   // A3：向量检索默认关闭（会消耗 embedding 额度，需用户显式开启）
   ragSearch: false,
+  // M12-C：后台索引队列默认不暂停
+  vectorIndexPaused: false,
   // A4：只自动「检查」更新并提示，不自动下载或安装
   autoUpdate: true
 }

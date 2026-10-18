@@ -514,5 +514,26 @@ export const migrations: Migration[] = [
       )`,
       `CREATE INDEX audit_run_project_idx ON audit_run (project_id, status)`
     ]
+  },
+  {
+    version: 10,
+    name: 'embedding_queue',
+    // M12-C：向量索引改为「后台队列 + 空闲时执行」。
+    //   本表只记录「待索引（脏）」的章节：正文版本更新 / 软删除时维护；
+    //   索引成功即删除该行，因此表体积 = 未完成工单数，可长期不涨。
+    statements: [
+      `CREATE TABLE embedding_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+        chapter_no INTEGER NOT NULL,
+        draft_id INTEGER NOT NULL DEFAULT 0,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        error TEXT NOT NULL DEFAULT '',
+        enqueued_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+      `CREATE UNIQUE INDEX embedding_queue_project_chapter_uq ON embedding_queue (project_id, chapter_no)`,
+      `CREATE INDEX embedding_queue_enqueued_idx ON embedding_queue (enqueued_at)`
+    ]
   }
 ]

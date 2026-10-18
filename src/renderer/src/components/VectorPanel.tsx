@@ -40,6 +40,21 @@ export default function VectorPanel() {
     }
   }
 
+  // M12-C：暂停 / 恢复后台索引队列（不丢工单，恢复后继续）
+  const togglePause = async (paused: boolean): Promise<void> => {
+    setBusy(true)
+    try {
+      const next = await window.inkwell.library.saveSettings({ vectorIndexPaused: paused })
+      setSettings(next)
+      setMessage(paused ? '已暂停后台索引（正文变更仍会入队）' : '已恢复后台索引')
+      if (activeProjectId !== null) setStatus(await window.inkwell.vector.status(activeProjectId))
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const rebuild = async (): Promise<void> => {
     if (activeProjectId === null) return
     setBusy(true)
@@ -103,6 +118,17 @@ export default function VectorPanel() {
           写作时启用向量检索（每章额外一次 embedding 调用）
         </label>
 
+        <label className="mt-1 flex items-center gap-2 text-xs text-stone-600">
+          <input
+            type="checkbox"
+            checked={settings?.vectorIndexPaused ?? false}
+            disabled={busy}
+            onChange={(e) => void togglePause(e.target.checked)}
+            className="accent-amber-500"
+          />
+          暂停后台索引（不丢工单，恢复后继续）
+        </label>
+
         {activeProjectId === null ? (
           <p className="mt-4 rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-500">
             请先打开一个项目，再回来重建索引。
@@ -128,6 +154,13 @@ export default function VectorPanel() {
                 <dt className="text-stone-400">维度 / 更新时间</dt>
                 <dd className="text-stone-700">
                   {status?.dim || '—'} · {status?.updatedAt ? new Date(status.updatedAt).toLocaleString('zh-CN') : '—'}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-stone-400">后台队列</dt>
+                <dd className={status?.paused ? 'text-amber-700' : 'text-stone-700'}>
+                  {status?.paused ? '已暂停 · ' : ''}
+                  待索引 {status?.pending ?? 0} 章
                 </dd>
               </div>
             </dl>

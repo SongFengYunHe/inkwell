@@ -4,7 +4,7 @@ import { buildMessagesFor } from '../prompts/zh-CN'
 import { buildChapterContext } from './context'
 import { invokeChat } from './invoke'
 import { augmentContext } from '../search/recall'
-import { indexChapterDraft } from '../search/vector'
+import { enqueueChapterIndex } from '../search/index-queue'
 import { recordGenerationRevision } from '../db/revision-repo'
 
 const SOURCE_BY_MODE: Record<GenerationMode, string> = {
@@ -69,8 +69,8 @@ export async function runGeneration(options: RunGenerationOptions): Promise<Chap
   if (input.mode === 'polish') recordGenerationRevision('polish', latestDraft, saved)
   else if (input.mode === 'rewrite') recordGenerationRevision('rewrite', latestDraft, saved)
 
-  // A3：落盘后增量索引（开关关闭或无 embedder 时自动跳过，失败不影响写作）
-  await indexChapterDraft(input.projectId, input.chapterNo, saved.id, saved.content, signal)
+  // M12-C：落盘后只入队，真正的 embedding 调用交给后台队列（空闲时执行，不与生成抢资源）
+  enqueueChapterIndex(input.projectId, input.chapterNo, saved.id)
 
   return saved
 }

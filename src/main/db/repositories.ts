@@ -15,6 +15,8 @@ import { chapterBrief, chapterDraft, project } from './schema'
 import { ensureVolume } from './volume-repo'
 import { isQuitting } from '../lifecycle'
 import { addChaptersDone, addWords } from '../stat/tracker'
+// M12-C：向量索引改为后台队列——写入后只入队，索引在空闲时串行完成
+import { enqueueChapterIndex, removeChapterIndex } from '../search/index-queue'
 
 /** 退出过程中拒绝新的写操作，保证数据落盘一致 */
 function assertWritable(): void {
@@ -188,6 +190,8 @@ export function deleteBrief(id: number): void {
       )
     )
     .run()
+  // M12-C：删除章节时同步移除该章的向量索引与待办工单
+  removeChapterIndex(row.projectId, row.chapterNo)
 }
 
 /* ---------------------------------- 正文 --------------------------------- */
@@ -314,11 +318,19 @@ export function saveDraft(input: DraftSaveInput): ChapterDraft {
   addWords(wordCount - before, now)
   if (wordCount > 0 && nonEmptyBefore === 0) addChaptersDone(1, now)
 
+  // M12-C：正文版本更新后同步维护向量索引（有正文则入队，清空则移除索引）
+  if (wordCount > 0) enqueueChapterIndex(input.projectId, input.chapterNo, row.id)
+  else removeChapterIndex(input.projectId, input.chapterNo)
+
   return row
 }
 
 export function deleteDraft(id: number): void {
   assertWritable()
+  const db = getDb()
+  const row = db.select().from(chapterDraft).where(eq(chapterDraft.id, id)).get()
   const now = Date.now()
-  getDb().update(chapterDraft).set({ deletedAt: now, updatedAt: now }).where(eq(chapterDraft.id, id)).run()
+  db.update(chapterDraft).set({ deletedAt: now, updatedAt: now }).where(eq(chapterDraft.id, id)).run()
+  // M12-C：软删除正文时同步移除该章的向量索引与待办工单
+  if (row) removeChapterIndex(row.projectId, row.chapterNo)
 }

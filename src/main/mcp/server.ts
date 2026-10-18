@@ -15,7 +15,6 @@ import { commitMemory } from '../engine/memory'
 import { buildChapterContext } from '../llm/context'
 import { buildBriefExpandMessages, buildMessagesFor } from '../prompts/zh-CN'
 import { augmentContext } from '../search/recall'
-import { indexChapterDraft } from '../search/vector'
 
 interface TextBlock {
   type: 'text'
@@ -261,8 +260,7 @@ export function createInkwellMcpServer(): McpServer {
         source: 'write',
         content
       })
-      // A3：Agent 落盘后同样增量索引，后续章节才能召回（不可用时静默跳过）
-      await indexChapterDraft(projectId, chapterNo, saved.id, saved.content)
+      // M12-C：正文落盘后的向量索引统一由 saveDraft 入队，这里不再同步调用 embedding
 
       // 记忆回写是增强项：没有可用的 extractor 端点时静默跳过，不影响落盘
       let memoryCommitted = false

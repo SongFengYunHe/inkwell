@@ -515,6 +515,28 @@ export const embedding = sqliteTable(
   ]
 )
 
+/** M12-C 向量索引入队表：只存「待索引（脏）」的章节，索引成功即删行 */
+export const embeddingQueue = sqliteTable(
+  'embedding_queue',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    chapterNo: integer('chapter_no').notNull(),
+    /** 入队时的正文版本 id（仅作提示，实际按「最新未删版本」索引） */
+    draftId: integer('draft_id').notNull().default(0),
+    attempts: integer('attempts').notNull().default(0),
+    error: text('error').notNull().default(''),
+    enqueuedAt: integer('enqueued_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (t) => [
+    uniqueIndex('embedding_queue_project_chapter_uq').on(t.projectId, t.chapterNo),
+    index('embedding_queue_enqueued_idx').on(t.enqueuedAt)
+  ]
+)
+
 /** M10 审计配置（单行，禁止多行） */
 export const auditConfig = sqliteTable('audit_config', {
   id: integer('id').primaryKey(),
