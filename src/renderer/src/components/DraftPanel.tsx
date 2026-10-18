@@ -2,7 +2,7 @@ import type { DraftRevision, GenerationMode } from '@shared/types'
 import StyleAuditPanel from './StyleAuditPanel'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../stores/appStore'
-import { BUTTON_GHOST, BUTTON_PRIMARY } from './ui'
+import { BUTTON_GHOST, BUTTON_PRIMARY, confirmDialog, toast } from './ui'
 
 const MODE_LABEL: Record<GenerationMode, string> = {
   draft: '生成正文',
@@ -23,9 +23,7 @@ export default function DraftPanel() {
   const currentChapterNo = useAppStore((s) => s.currentChapterNo)
   const generating = useAppStore((s) => s.generating)
   const streamText = useAppStore((s) => s.streamText)
-  const notice = useAppStore((s) => s.notice)
   const loading = useAppStore((s) => s.loading)
-  const clearNotice = useAppStore((s) => s.clearNotice)
   const setView = useAppStore((s) => s.setView)
   const generate = useAppStore((s) => s.generate)
   const abortGeneration = useAppStore((s) => s.abortGeneration)
@@ -89,7 +87,14 @@ export default function DraftPanel() {
     chapterNo: number
     revisionId: number
   }): Promise<void> => {
-    if (!window.confirm('回退会用该修订「修改前」的正文落一个新版本（历史版本都还在）。继续？')) return
+    if (
+      !(await confirmDialog({
+        title: '回退修订',
+        message: '回退会用该修订「修改前」的正文落一个新版本（历史版本都还在）。继续？'
+      }))
+    ) {
+      return
+    }
     try {
       await window.inkwell.revision.revert(input)
       await reloadDrafts()
@@ -97,7 +102,7 @@ export default function DraftPanel() {
         setRevisions(await window.inkwell.revision.list(activeProjectId, input.chapterNo))
       }
     } catch (err) {
-      window.alert('回退失败：' + (err instanceof Error ? err.message : String(err)))
+      toast.error('回退失败：' + (err instanceof Error ? err.message : String(err)))
     }
   }
 
@@ -140,6 +145,21 @@ export default function DraftPanel() {
       version: current.version,
       content
     })
+  }
+
+  /** 切换版本：有未保存修改时先确认，避免静默丢弃 */
+  const changeVersion = async (value: number): Promise<void> => {
+    if (
+      dirty &&
+      !(await confirmDialog({
+        title: '切换版本',
+        message: '当前有未保存的修改，切换版本会丢弃它们。继续？',
+        variant: 'danger'
+      }))
+    ) {
+      return
+    }
+    setSelectedVersion(value)
   }
 
   /** R10：版本列表只有摘要，禁用态改用 wordCount 判断「有没有正文」 */
@@ -275,10 +295,7 @@ export default function DraftPanel() {
               版本
               <select
                 value={current?.version ?? ''}
-                onChange={(e) => {
-                  if (dirty && !window.confirm('当前有未保存的修改，切换版本会丢弃它们。继续？')) return
-                  setSelectedVersion(Number(e.target.value))
-                }}
+                onChange={(e) => void changeVersion(Number(e.target.value))}
                 className="rounded border border-stone-200 bg-white px-1.5 py-1 text-xs"
               >
                 {versions.map((item) => (
@@ -302,14 +319,9 @@ export default function DraftPanel() {
         </div>
       )}
 
-      {(notice || generating !== null) && (
+      {generating !== null && (
         <div className="flex items-center gap-3 rounded-lg border border-stone-200 bg-stone-50 px-4 py-2 text-sm text-stone-600">
-          <span>{generating !== null ? `正在${MODE_LABEL[generating.mode]}…` : notice}</span>
-          {generating === null && notice && (
-            <button type="button" onClick={clearNotice} className="ml-auto text-xs text-stone-400 hover:text-stone-600">
-              关闭
-            </button>
-          )}
+          <span>{`正在${MODE_LABEL[generating.mode]}…`}</span>
         </div>
       )}
 

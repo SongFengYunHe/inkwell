@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { BUTTON_PRIMARY, INPUT_CLASS } from './ui'
+import { BUTTON_PRIMARY, INPUT_CLASS, Modal } from './ui'
 
 interface DropResult {
   path: string
@@ -174,18 +174,13 @@ export function PasteImportDialog({
 }) {
   const [text, setText] = useState('')
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6">
-      <div className="flex w-full max-w-2xl flex-col gap-3 rounded-xl bg-white p-5 shadow-xl">
-        <h2 className="text-sm font-medium text-stone-700">粘贴文本导入</h2>
-        <p className="text-xs text-stone-400">与文件导入走完全相同的解析管线，适合从网页 / 聊天记录复制一段大纲。</p>
-        <textarea
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          rows={12}
-          placeholder="在此粘贴大纲文本…"
-          className={`${INPUT_CLASS} resize-none`}
-        />
-        <div className="flex justify-end gap-3">
+    <Modal
+      title="粘贴文本导入"
+      description="与文件导入走完全相同的解析管线，适合从网页 / 聊天记录复制一段大纲。"
+      size="lg"
+      onClose={onClose}
+      footer={
+        <>
           <button
             type="button"
             onClick={onClose}
@@ -196,8 +191,16 @@ export function PasteImportDialog({
           <button type="button" disabled={!text.trim() || busy} onClick={() => onSubmit(text)} className={BUTTON_PRIMARY}>
             开始解析
           </button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <textarea
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        rows={12}
+        placeholder="在此粘贴大纲文本…"
+        className={`${INPUT_CLASS} resize-none`}
+      />
+    </Modal>
   )
 }

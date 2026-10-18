@@ -24,6 +24,7 @@ const isM9SmokeRun = process.argv.includes('--smoke-m9')
 const isM10SmokeRun = process.argv.includes('--smoke-m10')
 const isM11SmokeRun = process.argv.includes('--smoke-m11')
 const isM12SmokeRun = process.argv.includes('--smoke-m12')
+const isM13SmokeRun = process.argv.includes('--smoke-m13')
 
 const isAnySmokeRun =
   isSmokeRun ||
@@ -38,7 +39,8 @@ const isAnySmokeRun =
   isM9SmokeRun ||
   isM10SmokeRun ||
   isM11SmokeRun ||
-  isM12SmokeRun
+  isM12SmokeRun ||
+  isM13SmokeRun
 
 // 冒烟自检使用独立目录，且不做书库引导（沿用固定库路径）
 if (isAnySmokeRun) {
@@ -146,6 +148,7 @@ app.whenReady().then(async () => {
     if (isM10SmokeRun) return void (await import('./smoke-m10')).runSmokeM10()
     if (isM11SmokeRun) return void (await import('./smoke-m11')).runSmokeM11()
     if (isM12SmokeRun) return void (await import('./smoke-m12')).runSmokeM12()
+    if (isM13SmokeRun) return void (await import('./smoke-m13')).runSmokeM13()
     return
   }
 

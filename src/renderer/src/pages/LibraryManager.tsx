@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { LibraryInfo, LibraryPrecheck } from '@shared/types'
 import ThemeToggle from '../components/ThemeToggle'
 import { useAppStore } from '../stores/appStore'
-import { BUTTON_GHOST, BUTTON_PRIMARY, INPUT_CLASS } from '../components/ui'
+import { BUTTON_GHOST, BUTTON_PRIMARY, INPUT_CLASS, Modal, confirmDialog } from '../components/ui'
 
 function formatBytes(bytes: number | null): string {
   if (bytes === null) return '未知'
@@ -92,7 +92,14 @@ export default function LibraryManager() {
         setMessage(target.blockingError)
         return
       }
-      if (target.warnings.length > 0 && !window.confirm(`${target.warnings.join('\n')}\n\n仍然继续？`)) return
+      if (
+        target.warnings.length > 0 &&
+        !(await confirmDialog({
+          title: '检测到潜在风险',
+          message: `${target.warnings.join('\n')}\n\n仍然继续？`
+        }))
+      )
+        return
       await window.inkwell.library.create({ name: name.trim(), path: path.trim() })
       setName('')
       setPath('')
@@ -165,9 +172,11 @@ export default function LibraryManager() {
   const purgeLegacy = (): void => {
     void run(async () => {
       if (
-        !window.confirm(
-          '将永久删除原 userData 目录中的旧数据库文件。确认迁移后的书库一切正常后再操作。确定继续？'
-        )
+        !(await confirmDialog({
+          title: '清理旧数据',
+          message: '将永久删除原 userData 目录中的旧数据库文件。确认迁移后的书库一切正常后再操作。确定继续？',
+          variant: 'danger'
+        }))
       ) {
         return
       }
@@ -358,12 +367,30 @@ export default function LibraryManager() {
       </div>
 
       {removing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-6">
-          <div className="flex w-full max-w-md flex-col gap-4 rounded-2xl bg-white p-5 shadow-xl">
-            <div>
-              <h2 className="text-sm font-medium text-stone-800">移除书库「{removing.name}」</h2>
-              <p className="mt-1 break-all text-[11px] text-stone-400">{removing.path}</p>
-            </div>
+        <Modal
+          title={`移除书库「${removing.name}」`}
+          description={<span className="break-all">{removing.path}</span>}
+          size="md"
+          onClose={() => setRemoving(null)}
+          footer={
+            <>
+              <button type="button" onClick={() => setRemoving(null)} className={BUTTON_GHOST}>
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={submitRemove}
+                disabled={busy}
+                className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                  deleteFilesToo ? 'bg-red-600 hover:bg-red-500' : 'bg-stone-900 hover:bg-stone-700'
+                }`}
+              >
+                {deleteFilesToo ? '删除数据并移除' : '仅从列表移除'}
+              </button>
+            </>
+          }
+        >
+          <div className="flex flex-col gap-4">
             <p className="rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-600">
               默认只从列表移除，磁盘上的数据库 / 备份 / 导出全部保留，随时可以「挂载已有书库」找回来。
             </p>
@@ -380,40 +407,17 @@ export default function LibraryManager() {
                 <span className="text-red-500">此操作不可恢复，也不进回收站。</span>
               </span>
             </label>
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setRemoving(null)} className={BUTTON_GHOST}>
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={submitRemove}
-                disabled={busy}
-                className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                  deleteFilesToo ? 'bg-red-600 hover:bg-red-500' : 'bg-stone-900 hover:bg-stone-700'
-                }`}
-              >
-                {deleteFilesToo ? '删除数据并移除' : '仅从列表移除'}
-              </button>
-            </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {renaming && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-6">
-          <div className="flex w-full max-w-sm flex-col gap-4 rounded-2xl bg-white p-5 shadow-xl">
-            <h2 className="text-sm font-medium text-stone-800">重命名书库</h2>
-            <input
-              autoFocus
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') submitRename()
-                if (e.key === 'Escape') setRenaming(null)
-              }}
-              className={INPUT_CLASS}
-            />
-            <div className="flex justify-end gap-2">
+        <Modal
+          title="重命名书库"
+          size="sm"
+          onClose={() => setRenaming(null)}
+          footer={
+            <>
               <button type="button" onClick={() => setRenaming(null)} className={BUTTON_GHOST}>
                 取消
               </button>
@@ -425,9 +429,20 @@ export default function LibraryManager() {
               >
                 保存
               </button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+        >
+          <input
+            autoFocus
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submitRename()
+              if (e.key === 'Escape') setRenaming(null)
+            }}
+            className={INPUT_CLASS}
+          />
+        </Modal>
       )}
     </div>
   )

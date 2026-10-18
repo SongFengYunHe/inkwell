@@ -577,3 +577,12 @@ export const schemaVersion = sqliteTable('schema_version', {
   version: integer('version').primaryKey(),
   appliedAt: integer('applied_at').notNull()
 })
+
+/* ============================ M13：UI 偏好持久化 ============================ */
+
+/** UI 偏好（键值对）：值统一存字符串，JSON 由渲染层序列化 */
+export const uiPref = sqliteTable('ui_pref', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull().default(''),
+  updatedAt: integer('updated_at').notNull()
+})

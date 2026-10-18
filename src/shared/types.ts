@@ -1545,6 +1545,13 @@ export interface InkwellApi {
     /** 从用户选择的文件导入；取消时返回 null */
     import(): Promise<PackImportResult | null>
   }
+  /** M13：UI 偏好持久化（键值对，值由渲染层序列化） */
+  pref: {
+    all: () => Promise<Record<string, string>>
+    set: (input: { key: string; value: string }) => Promise<void>
+    remove: (key: string) => Promise<void>
+    reset: () => Promise<void>
+  }
   /** M7：Electron 44 已移除 File.path，拖拽落点必须经 preload 的 webUtils 解析 */
   resolveDropPath(file: File): string
   /** 主进程 → 渲染进程：迁移进度推送通道 */

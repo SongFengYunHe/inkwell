@@ -239,6 +239,13 @@ const api: InkwellApi = {
     export: (input: PackExportInput) => ipcRenderer.invoke(IpcChannel.packExport, input),
     import: () => ipcRenderer.invoke(IpcChannel.packImport)
   },
+  /** M13：UI 偏好持久化 */
+  pref: {
+    all: () => ipcRenderer.invoke(IpcChannel.prefAll),
+    set: (input: { key: string; value: string }) => ipcRenderer.invoke(IpcChannel.prefSet, input),
+    remove: (key: string) => ipcRenderer.invoke(IpcChannel.prefRemove, { key }),
+    reset: () => ipcRenderer.invoke(IpcChannel.prefReset)
+  },
   update: {
     status: () => ipcRenderer.invoke(IpcChannel.updateStatus),
     check: () => ipcRenderer.invoke(IpcChannel.updateCheck),

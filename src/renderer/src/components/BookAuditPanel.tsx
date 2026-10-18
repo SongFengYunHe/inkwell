@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AuditCheck, BookAuditEstimate, BookAuditProgress, BookAuditSummary } from '@shared/types'
+import { Modal } from './ui'
 
 const SEVERITY_LABEL: Record<AuditCheck['severity'], string> = { info: '提示', warn: '警告', error: '严重' }
 const SEVERITY_CLASS: Record<AuditCheck['severity'], string> = {
@@ -139,52 +140,54 @@ export default function BookAuditPanel({ projectId, onClose }: { projectId: numb
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-stone-900/40 px-4 py-8">
-      <div className="flex h-full max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <header className="flex items-center gap-3 border-b border-stone-200 px-5 py-3">
-          <h2 className="text-base font-medium">全书一键体检</h2>
-          <span className="text-xs text-stone-400">默认仅跑确定性审计（不联网、零成本）</span>
-          <div className="ml-auto flex items-center gap-2">
-            <label className="flex items-center gap-1.5 text-xs text-stone-500">
-              <input
-                type="checkbox"
-                checked={useModel}
-                onChange={(event) => setUseModel(event.target.checked)}
-                className="accent-amber-500"
-              />
-              模型语义审计
-            </label>
+    <Modal
+      title="全书一键体检"
+      description="默认仅跑确定性审计（不联网、零成本）"
+      size="xl"
+      onClose={onClose}
+      className="max-h-[86vh]"
+    >
+      <div className="flex h-full min-h-0 flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1.5 text-xs text-stone-500">
+            <input
+              type="checkbox"
+              checked={useModel}
+              onChange={(event) => setUseModel(event.target.checked)}
+              className="accent-amber-500"
+            />
+            模型语义审计
+          </label>
+          <button
+            type="button"
+            onClick={() => void startAudit(useModel, useModel ? false : true)}
+            disabled={running || fixing}
+            className="rounded-lg bg-stone-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-stone-700 disabled:opacity-40"
+          >
+            {running ? '体检中…' : '重新体检'}
+          </button>
+          {running && (
             <button
               type="button"
-              onClick={() => void startAudit(useModel, useModel ? false : true)}
-              disabled={running || fixing}
-              className="rounded-lg bg-stone-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-stone-700 disabled:opacity-40"
-            >
-              {running ? '体检中…' : '重新体检'}
-            </button>
-            {running && (
-              <button
-                type="button"
-                onClick={() => taskId && void window.inkwell.audit.abort(taskId)}
-                className="rounded-lg border border-stone-200 px-3 py-1.5 text-sm text-stone-600 transition hover:bg-stone-50"
-              >
-                中止
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={onClose}
+              onClick={() => taskId && void window.inkwell.audit.abort(taskId)}
               className="rounded-lg border border-stone-200 px-3 py-1.5 text-sm text-stone-600 transition hover:bg-stone-50"
             >
-              关闭
+              中止
             </button>
-          </div>
-        </header>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-auto rounded-lg border border-stone-200 px-3 py-1.5 text-sm text-stone-600 transition hover:bg-stone-50"
+          >
+            关闭
+          </button>
+        </div>
 
-        {error && <div className="border-b border-red-200 bg-red-50 px-5 py-2 text-xs text-red-700">{error}</div>}
+        {error && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>}
 
         {estimate && (
-          <div className="flex items-center gap-4 border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-800">
+          <div className="flex items-center gap-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
             <span>
               模型语义审计将逐章调用审稿模型：共 <b>{estimate.chapters}</b> 章，预估提示词约{' '}
               <b>{estimate.promptTokens.toLocaleString()}</b> tokens，合计约{' '}
@@ -204,7 +207,7 @@ export default function BookAuditPanel({ projectId, onClose }: { projectId: numb
         )}
 
         {progress && (
-          <div className="border-b border-stone-200 bg-stone-50 px-5 py-2">
+          <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2">
             <div className="flex justify-between text-[11px] text-stone-500">
               <span>{progress.message}</span>
               <span>
@@ -351,6 +354,6 @@ export default function BookAuditPanel({ projectId, onClose }: { projectId: numb
           </section>
         </div>
       </div>
-    </div>
+    </Modal>
   )
 }

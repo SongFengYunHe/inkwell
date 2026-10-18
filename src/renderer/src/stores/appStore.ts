@@ -38,6 +38,7 @@ import type {
   StatSetGoalInput
 } from '@shared/types'
 import { create } from 'zustand'
+import { HABIT_RECENT_MAX, readHabits } from '../habits'
 
 export type View = 'bookshelf' | 'workspace' | 'settings' | 'library'
 
@@ -250,6 +251,19 @@ interface AppState {
   /* ----------------------------- M8：写作统计 ----------------------------- */
   loadStat: () => Promise<void>
   saveGoal: (input: StatSetGoalInput) => Promise<void>
+
+  /* ----------------------------- M13：UI 偏好与习惯画像 ----------------------------- */
+  /** 来自 ui_pref 表的键值偏好（布局记忆 / 命令使用计数 / 工具栏 pin） */
+  prefs: Record<string, string>
+  /** 偏好是否已从库中读过一次（工作区据此决定何时恢复布局，避免用空值覆盖记忆） */
+  prefsLoaded: boolean
+  loadPrefs: () => Promise<void>
+  /** 乐观更新 + 后台落库；失败不打断界面（偏好丢了也只是回到默认布局） */
+  setPref: (key: string, value: string) => void
+  /** 记录一次命令使用（命令面板按「频次 × 最近」动态排序） */
+  recordCommandUse: (id: string) => void
+  /** 重置习惯画像与布局记忆（设置页「重置」入口） */
+  resetPrefs: () => Promise<void>
 }
 
 /** 统一收敛错误信息，避免每个动作各写一遍 try/catch */
@@ -325,6 +339,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   importSession: null,
   importProgress: null,
   stat: null,
+  prefs: {},
+  prefsLoaded: false,
 
   setTheme: (theme) => {
     localStorage.setItem(THEME_KEY, theme)
@@ -1046,5 +1062,37 @@ export const useAppStore = create<AppState>((set, get) => ({
   saveGoal: async (input) => {
     const summary = await guard(set, () => window.inkwell.stat.setGoal(input))
     if (summary) set({ stat: summary })
+  },
+
+  /* ----------------------------- M13：UI 偏好与习惯画像 ----------------------------- */
+
+  loadPrefs: async () => {
+    // 无库 / 旧库时静默回落到默认布局，不在启动时打扰用户
+    try {
+      set({ prefs: await window.inkwell.pref.all(), prefsLoaded: true })
+    } catch {
+      set({ prefs: {}, prefsLoaded: true })
+    }
+  },
+
+  setPref: (key, value) => {
+    set({ prefs: { ...get().prefs, [key]: value } })
+    void window.inkwell.pref.set({ key, value }).catch(() => {
+      /* 偏好落库失败不打断写作：下次启动回落到默认布局即可 */
+    })
+  },
+
+  recordCommandUse: (id) => {
+    const habits = readHabits(get().prefs)
+    const usage = { ...habits.usage, [id]: (habits.usage[id] ?? 0) + 1 }
+    const recent = [id, ...habits.recent.filter((item) => item !== id)].slice(0, HABIT_RECENT_MAX)
+    set({ prefs: { ...get().prefs, 'cmd:usage': JSON.stringify(usage), 'cmd:recent': JSON.stringify(recent) } })
+    void window.inkwell.pref.set({ key: 'cmd:usage', value: JSON.stringify(usage) }).catch(() => {})
+    void window.inkwell.pref.set({ key: 'cmd:recent', value: JSON.stringify(recent) }).catch(() => {})
+  },
+
+  resetPrefs: async () => {
+    const ok = await guardOk(set, () => window.inkwell.pref.reset())
+    if (ok) set({ prefs: {} })
   }
 }))

@@ -26,6 +26,7 @@
     "smoke:m10": "electron-vite build && electron . --smoke-m10",
     "smoke:m11": "electron-vite build && electron . --smoke-m11",
     "smoke:m12": "electron-vite build && electron . --smoke-m12",
+    "smoke:m13": "electron-vite build && electron . --smoke-m13",
     "clean:release": "node scripts/clean-release.mjs",
     "pack:dir": "npm run clean:release && electron-vite build && electron-builder --win --dir --publish never",
     "dist:win": "npm run clean:release && electron-vite build && electron-builder --win --publish never"

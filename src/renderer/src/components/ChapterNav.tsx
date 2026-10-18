@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useAppStore } from '../stores/appStore'
+import { cn, IconButton } from './ui'
 
 type ChapterStatus = 'none' | 'briefed' | 'written'
 
@@ -22,7 +23,21 @@ const VIRTUAL_THRESHOLD = 200
 /** 视口外多渲染几行，滚动更平滑 */
 const OVERSCAN = 4
 
-export default function ChapterNav() {
+/**
+ * 章节导航（M13-B：宽度 / 折叠加 / 换边由父容器控制）。
+ * 自身不再写死 w-60，改为受控宽度，以便工作区 Dock 化后自由调宽与折叠。
+ */
+export default function ChapterNav({
+  onCollapse,
+  side = 'left',
+  className,
+  style
+}: {
+  onCollapse?: () => void
+  side?: 'left' | 'right'
+  className?: string
+  style?: CSSProperties
+} = {}) {
   const briefs = useAppStore((s) => s.briefs)
   const drafts = useAppStore((s) => s.drafts)
   const currentChapterNo = useAppStore((s) => s.currentChapterNo)
@@ -102,16 +117,31 @@ export default function ChapterNav() {
   )
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-stone-200 bg-stone-50/60">
+    <aside
+      style={style}
+      className={cn(
+        'flex min-h-0 flex-col bg-stone-50/60',
+        side === 'left' ? 'border-r' : 'border-l',
+        'border-stone-200',
+        className
+      )}
+    >
       <div className="flex items-center justify-between border-b border-stone-200 px-3 py-2">
         <span className="text-xs font-medium text-stone-500">章节</span>
-        <button
-          type="button"
-          onClick={() => setCurrentChapter(nextChapterNo)}
-          className="text-xs text-amber-700 hover:underline"
-        >
-          + 第 {nextChapterNo} 章
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setCurrentChapter(nextChapterNo)}
+            className="text-xs text-amber-700 hover:underline"
+          >
+            + 第 {nextChapterNo} 章
+          </button>
+          {onCollapse && (
+            <IconButton label="收起章节栏" onClick={onCollapse} className="h-6 w-6 text-xs">
+              {side === 'left' ? '⟨' : '⟩'}
+            </IconButton>
+          )}
+        </div>
       </div>
 
       <div

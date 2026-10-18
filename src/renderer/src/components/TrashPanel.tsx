@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { TrashItem, TrashRetention } from '@shared/types'
 import { useAppStore } from '../stores/appStore'
-import { BUTTON_GHOST } from './ui'
+import { BUTTON_GHOST, confirmDialog } from './ui'
 
 const RETENTION_OPTIONS: Array<{ value: TrashRetention; label: string }> = [
   { value: 7, label: '保留 7 天' },
@@ -67,7 +67,15 @@ export default function TrashPanel() {
   }
 
   const empty = async (): Promise<void> => {
-    if (!window.confirm('清空回收站会永久删除其中全部内容，无法恢复。确定继续？')) return
+    if (
+      !(await confirmDialog({
+        title: '清空回收站',
+        message: '清空回收站会永久删除其中全部内容，无法恢复。确定继续？',
+        variant: 'danger'
+      }))
+    ) {
+      return
+    }
     setBusy(true)
     try {
       const result = await window.inkwell.trash.empty()

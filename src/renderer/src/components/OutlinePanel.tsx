@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useAppStore } from '../stores/appStore'
 import StylePanel from './StylePanel'
 import VolumePanel from './VolumePanel'
-import { BUTTON_GHOST, BUTTON_PRIMARY, INPUT_CLASS, Labeled } from './ui'
+import { BUTTON_GHOST, BUTTON_PRIMARY, INPUT_CLASS, Labeled, confirmDialog } from './ui'
 
 interface OutlineForm {
   premise: string
@@ -63,7 +63,10 @@ export default function OutlinePanel() {
   const handleWizard = async (): Promise<void> => {
     if (
       form.coreOutline.trim() &&
-      !window.confirm('AI 生成会覆盖世界观 / 主角 / 金手指 / 文风 / 总大纲（不会动已有细纲）。继续？')
+      !(await confirmDialog({
+        title: 'AI 生成设定与大纲',
+        message: 'AI 生成会覆盖世界观 / 主角 / 金手指 / 文风 / 总大纲（不会动已有细纲）。继续？'
+      }))
     ) {
       return
     }

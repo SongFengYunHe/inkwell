@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { BackupInfo, LibrarySettings } from '@shared/types'
-import { BUTTON_GHOST, BUTTON_PRIMARY } from './ui'
+import { BUTTON_GHOST, BUTTON_PRIMARY, confirmDialog } from './ui'
 
 function formatTime(ts: number): string {
   const d = new Date(ts)
@@ -51,7 +51,15 @@ export default function BackupPanel() {
   }
 
   const restore = async (item: BackupInfo): Promise<void> => {
-    if (!window.confirm(`将用「${item.name}」覆盖当前书库，恢复前会自动再备份一份当前数据。确定恢复？`)) return
+    if (
+      !(await confirmDialog({
+        title: '恢复备份',
+        message: `将用「${item.name}」覆盖当前书库，恢复前会自动再备份一份当前数据。确定恢复？`,
+        variant: 'danger'
+      }))
+    ) {
+      return
+    }
     setBusy(true)
     try {
       await window.inkwell.backup.restore(item.name)

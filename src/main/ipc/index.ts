@@ -32,6 +32,8 @@ import {
   pathSchema,
   pipelineStartSchema,
   pipelineSteerSchema,
+  prefKeyOnlySchema,
+  prefSetSchema,
   projectCreateSchema,
   projectIdSchema,
   projectUpdateSchema,
@@ -69,6 +71,7 @@ import { app, dialog, ipcMain, session, shell, type WebContents } from 'electron
 import { exportChapterTask } from '../bridge/task-slip'
 import { getDatabasePath } from '../db/client'
 import * as repo from '../db/repositories'
+import { listUiPrefs, removeUiPref, resetUiPrefs, setUiPref } from '../db/ui-pref-repo'
 import { getLatestReview, listCharacters, removeCharacter, saveCharacter, saveReview } from '../db/memory-repo'
 import { applyThemePack, buildThemePack } from '../pack/theme-pack'
 /* M10：质量闭环 */
@@ -849,5 +852,19 @@ export function registerIpcHandlers(): void {
     if (picked.canceled || picked.filePaths.length === 0) return null
     const text = readFileSync(picked.filePaths[0], 'utf8')
     return applyThemePack(JSON.parse(text) as unknown)
+  })
+
+  /* ============================ M13：UI 偏好持久化 ============================ */
+
+  ipcMain.handle(IpcChannel.prefAll, () => listUiPrefs())
+  ipcMain.handle(IpcChannel.prefSet, (_event, raw: unknown) => {
+    const input = prefSetSchema.parse(raw)
+    setUiPref(input.key, input.value)
+  })
+  ipcMain.handle(IpcChannel.prefRemove, (_event, raw: unknown) => {
+    removeUiPref(prefKeyOnlySchema.parse(raw).key)
+  })
+  ipcMain.handle(IpcChannel.prefReset, () => {
+    resetUiPrefs()
   })
 }

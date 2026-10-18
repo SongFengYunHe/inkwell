@@ -535,5 +535,18 @@ export const migrations: Migration[] = [
       `CREATE UNIQUE INDEX embedding_queue_project_chapter_uq ON embedding_queue (project_id, chapter_no)`,
       `CREATE INDEX embedding_queue_enqueued_idx ON embedding_queue (enqueued_at)`
     ]
+  },
+  {
+    version: 11,
+    name: 'ui_pref',
+    // M13：UI 偏好持久化（键值对）。值统一存字符串，JSON 由渲染层序列化；
+    // 键形如 layout:<projectId> / layout:default / cmd:usage / toolbar:pin。
+    statements: [
+      `CREATE TABLE ui_pref (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL DEFAULT '',
+        updated_at INTEGER NOT NULL
+      )`
+    ]
   }
 ]

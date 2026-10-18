@@ -147,7 +147,12 @@ export const IpcChannel = {
   packExport: 'pack:export',
   packImport: 'pack:import',
   /** R1：取消迁移 */
-  libraryCancelMigrate: 'library:cancel-migrate'
+  libraryCancelMigrate: 'library:cancel-migrate',
+  /** M13：UI 偏好持久化 */
+  prefAll: 'pref:all',
+  prefSet: 'pref:set',
+  prefRemove: 'pref:remove',
+  prefReset: 'pref:reset'
 } as const
 
 export type IpcChannelName = (typeof IpcChannel)[keyof typeof IpcChannel]
@@ -513,3 +518,9 @@ export const statSetGoalSchema = z
   .refine((value) => value.dailyWords !== undefined || value.dailyChapters !== undefined, {
     message: '至少需要设置一项目标'
   })
+
+/* ============================ M13：UI 偏好持久化 ============================ */
+
+export const prefKeySchema = z.string().trim().min(1).max(200)
+export const prefSetSchema = z.object({ key: prefKeySchema, value: z.string().max(200_000) })
+export const prefKeyOnlySchema = z.object({ key: prefKeySchema })

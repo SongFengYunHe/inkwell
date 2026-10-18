@@ -7,6 +7,10 @@ import Workspace from './pages/Workspace'
 import DropZone from './components/DropZone'
 import MigrationWizard from './components/MigrationWizard'
 import SearchPalette from './components/SearchPalette'
+import ShortcutHelp from './components/ShortcutHelp'
+import { ConfirmHost, toast, ToastHost } from './components/ui'
+import { registerCommands, runCommand } from './commands'
+import { isTypingContext, matchesShortcut } from './shortcuts'
 import { useAppStore } from './stores/appStore'
 
 export default function App() {
@@ -17,8 +21,13 @@ export default function App() {
   const notice = useAppStore((s) => s.notice)
   const clearNotice = useAppStore((s) => s.clearNotice)
   const theme = useAppStore((s) => s.theme)
+  const toggleTheme = useAppStore((s) => s.toggleTheme)
+  const setView = useAppStore((s) => s.setView)
   const loadProjects = useAppStore((s) => s.loadProjects)
   const loadBootstrap = useAppStore((s) => s.loadBootstrap)
+  const loadPrefs = useAppStore((s) => s.loadPrefs)
+  const backToBookshelf = useAppStore((s) => s.backToBookshelf)
+  const openMigration = useAppStore((s) => s.openMigration)
   const handleGenerateEvent = useAppStore((s) => s.handleGenerateEvent)
   const handleWizardEvent = useAppStore((s) => s.handleWizardEvent)
   const handlePipelineEvent = useAppStore((s) => s.handlePipelineEvent)
@@ -30,24 +39,15 @@ export default function App() {
   const dropImport = useAppStore((s) => s.dropImport)
   const handleImportEvent = useAppStore((s) => s.handleImportEvent)
 
-  /** M8：Ctrl+K 唤起命令面板（检索 + 跳转章节） */
+  /** M8：Ctrl+K 唤起命令面板；M13-C：`?` 唤起快捷键速查 */
   const [searchOpen, setSearchOpen] = useState(false)
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        setSearchOpen((open) => !open)
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  const [helpOpen, setHelpOpen] = useState(false)
 
   useEffect(() => {
     void loadBootstrap()
     void loadProjects()
-  }, [loadBootstrap, loadProjects])
+    void loadPrefs()
+  }, [loadBootstrap, loadProjects, loadPrefs])
 
   // 深浅主题：切换 <html> 上的 dark 类（颜色由 global.css 统一重映射）
   useEffect(() => {
@@ -82,14 +82,88 @@ export default function App() {
     }
   }, [])
 
-  // 撤销提示 5 秒后自动消失
+  /* ---------------------- M13-A：把 store 的提示统一桥接为 toast ---------------------- */
+
+  useEffect(() => {
+    if (!error) return
+    toast.error(error)
+    clearError()
+  }, [error, clearError])
+
+  useEffect(() => {
+    if (!notice) return
+    toast.success(notice)
+    clearNotice()
+  }, [notice, clearNotice])
+
+  // 撤销提示 5 秒后自动消失（store 侧）→ toast 承载展示
   useEffect(() => {
     if (!undo) return
-    const timer = window.setTimeout(() => dismissUndo(), 5000)
+    toast.action(undo.message, { label: '撤销', onClick: () => void runUndo() }, 6000)
+    const timer = window.setTimeout(() => dismissUndo(), 6000)
     return () => window.clearTimeout(timer)
-  }, [undo, dismissUndo])
+  }, [undo, runUndo, dismissUndo])
 
-/** 拖拽落点路由：逐个文件交给 store 分流，汇总成败供重试（useCallback 稳定引用，
+  /* ---------------------- M13-C：全局命令注册与快捷键 ---------------------- */
+
+  const invoke = useCallback(
+    async (id: string): Promise<void> => {
+      const ok = await runCommand(id)
+      if (!ok) toast.warning('该动作在当前上下文不可用')
+    },
+    []
+  )
+
+  useEffect(
+    () =>
+      registerCommands({
+        settings: () => setView('settings'),
+        library: () => setView('library'),
+        bookshelf: () => backToBookshelf(),
+        theme: () => toggleTheme(),
+        migration: () => openMigration()
+      }),
+    [setView, backToBookshelf, toggleTheme, openMigration]
+  )
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (matchesShortcut(event, 'Ctrl+K')) {
+        event.preventDefault()
+        setSearchOpen((open) => !open)
+        return
+      }
+      if (matchesShortcut(event, 'Ctrl+Shift+D')) {
+        event.preventDefault()
+        void invoke('theme')
+        return
+      }
+      if (matchesShortcut(event, 'Ctrl+,')) {
+        event.preventDefault()
+        void invoke('settings')
+        return
+      }
+      if (matchesShortcut(event, 'Ctrl+B')) {
+        event.preventDefault()
+        void invoke('bookshelf')
+        return
+      }
+      if (matchesShortcut(event, 'Ctrl+/')) {
+        event.preventDefault()
+        setHelpOpen((open) => !open)
+        return
+      }
+      // 单键 `?`：输入框内不触发，否则写正文时会误触
+      if (matchesShortcut(event, '?') && !isTypingContext(event.target)) {
+        event.preventDefault()
+        setHelpOpen((open) => !open)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [invoke])
+
+  /** 拖拽落点路由：逐个文件交给 store 分流，汇总成败供重试（useCallback 稳定引用，
    *  否则每次渲染都会让 DropZone 的 window 监听器摘挂一次，拖拽中途可能失效） */
   const handleDropPaths = useCallback(
     async (paths: string[], target: string): Promise<Array<{ path: string; ok: boolean }>> => {
@@ -120,51 +194,17 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col bg-stone-100 text-stone-800">
-      {error && (
-        <div className="flex items-center justify-between gap-4 border-b border-red-200 bg-red-50 px-5 py-2 text-sm text-red-700">
-          <span>{error}</span>
-          <button type="button" onClick={clearError} className="rounded px-2 py-0.5 hover:bg-red-100">
-            关闭
-          </button>
-        </div>
-      )}
-      {/* 工作区已有自己的 notice 展示，这里只在其他页面兜底显示 */}
-      {notice && view !== 'workspace' && (
-        <div className="flex items-center justify-between gap-4 border-b border-emerald-200 bg-emerald-50 px-5 py-2 text-sm text-emerald-800">
-          <span>{notice}</span>
-          <button type="button" onClick={clearNotice} className="rounded px-2 py-0.5 hover:bg-emerald-100/60">
-            关闭
-          </button>
-        </div>
-      )}
       <div className="min-h-0 flex-1">{page}</div>
-
-      {undo && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
-          <div className="pointer-events-auto flex items-center gap-4 rounded-xl bg-stone-900 px-4 py-2.5 text-sm text-white shadow-lg">
-            <span>{undo.message}</span>
-            <button
-              type="button"
-              onClick={() => void runUndo()}
-              className="rounded-md bg-amber-500 px-3 py-1 text-xs font-medium text-stone-900 transition hover:bg-amber-400"
-            >
-              撤销
-            </button>
-            <button
-              type="button"
-              onClick={dismissUndo}
-              className="text-xs text-stone-400 transition hover:text-white"
-            >
-              关闭
-            </button>
-          </div>
-        </div>
-      )}
 
       {migrationOpen && <MigrationWizard />}
       <DropZone onDropPaths={handleDropPaths} />
       {importSession && <ImportReview />}
       {searchOpen && <SearchPalette onClose={() => setSearchOpen(false)} />}
+      {helpOpen && <ShortcutHelp onClose={() => setHelpOpen(false)} />}
+
+      {/* M13-A：提示与确认的唯一出口（各页不再自画横幅 / window.confirm） */}
+      <ToastHost />
+      <ConfirmHost />
     </div>
   )
 }
