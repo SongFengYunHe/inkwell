@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../stores/appStore'
 
 type ChapterStatus = 'none' | 'briefed' | 'written'
@@ -15,11 +15,22 @@ const STATUS_TEXT: Record<ChapterStatus, string> = {
   written: '已生成'
 }
 
+/** M12-B：单行高度（px），与下方按钮「两行文本 + py-2」对应 */
+const ROW_HEIGHT = 56
+/** 超过该章节数才启用虚拟滚动（小项目全量渲染更省事） */
+const VIRTUAL_THRESHOLD = 200
+/** 视口外多渲染几行，滚动更平滑 */
+const OVERSCAN = 4
+
 export default function ChapterNav() {
   const briefs = useAppStore((s) => s.briefs)
   const drafts = useAppStore((s) => s.drafts)
   const currentChapterNo = useAppStore((s) => s.currentChapterNo)
   const setCurrentChapter = useAppStore((s) => s.setCurrentChapter)
+
+  const [scrollTop, setScrollTop] = useState(0)
+  const [viewport, setViewport] = useState(0)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
 
   const chapterNos = useMemo(() => {
     const numbers = new Set<number>()
@@ -35,16 +46,60 @@ export default function ChapterNav() {
     return list.sort((a, b) => a - b)
   }, [chapterNos, currentChapterNo])
 
+  // M12-B：把「每行都扫一遍 briefs / drafts」的 O(n²) 改成一次性建表 O(n)
+  const statusMap = useMemo(() => {
+    const map = new Map<number, ChapterStatus>()
+    for (const item of drafts) if (item.wordCount > 0) map.set(item.chapterNo, 'written')
+    for (const item of briefs) if (!map.has(item.chapterNo)) map.set(item.chapterNo, 'briefed')
+    return map
+  }, [briefs, drafts])
+  const titleMap = useMemo(() => new Map(briefs.map((item) => [item.chapterNo, item.title])), [briefs])
+
   const nextChapterNo = chapterNos.length === 0 ? 1 : Math.max(...chapterNos) + 1
+  const virtual = rows.length > VIRTUAL_THRESHOLD
 
-  const statusOf = (chapterNo: number): ChapterStatus => {
-    if (drafts.some((item) => item.chapterNo === chapterNo && item.wordCount > 0)) return 'written'
-    if (briefs.some((item) => item.chapterNo === chapterNo)) return 'briefed'
-    return 'none'
-  }
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const update = (): void => setViewport(el.clientHeight)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
-  const titleOf = (chapterNo: number): string =>
-    briefs.find((item) => item.chapterNo === chapterNo)?.title || '（未命名）'
+  const range = useMemo(() => {
+    if (!virtual || viewport === 0) return { start: 0, end: rows.length }
+    const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
+    const end = Math.min(rows.length, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN)
+    return { start, end }
+  }, [virtual, viewport, scrollTop, rows.length])
+
+  const renderRow = useCallback(
+    (chapterNo: number) => {
+      const status = statusMap.get(chapterNo) ?? 'none'
+      const active = chapterNo === currentChapterNo
+      return (
+        <button
+          key={chapterNo}
+          type="button"
+          onClick={() => setCurrentChapter(chapterNo)}
+          className={`mb-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition ${
+            active ? 'bg-white shadow-sm ring-1 ring-amber-400' : 'hover:bg-white/70'
+          }`}
+        >
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT[status]}`} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm text-stone-700">
+              第 {chapterNo} 章 · {titleMap.get(chapterNo) || '（未命名）'}
+            </span>
+            <span className="block text-[11px] text-stone-400">{STATUS_TEXT[status]}</span>
+          </span>
+        </button>
+      )
+    },
+    [currentChapterNo, statusMap, titleMap, setCurrentChapter]
+  )
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-stone-200 bg-stone-50/60">
@@ -59,29 +114,25 @@ export default function ChapterNav() {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2">
-        {rows.map((chapterNo) => {
-          const status = statusOf(chapterNo)
-          const active = chapterNo === currentChapterNo
-          return (
-            <button
-              key={chapterNo}
-              type="button"
-              onClick={() => setCurrentChapter(chapterNo)}
-              className={`mb-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition ${
-                active ? 'bg-white shadow-sm ring-1 ring-amber-400' : 'hover:bg-white/70'
-              }`}
-            >
-              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT[status]}`} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm text-stone-700">
-                  第 {chapterNo} 章 · {titleOf(chapterNo)}
-                </span>
-                <span className="block text-[11px] text-stone-400">{STATUS_TEXT[status]}</span>
-              </span>
-            </button>
-          )
-        })}
+      <div
+        ref={scrollRef}
+        onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+        className="flex-1 overflow-y-auto px-2 py-2"
+      >
+        {virtual ? (
+          <div style={{ height: rows.length * ROW_HEIGHT, position: 'relative' }}>
+            {rows.slice(range.start, range.end).map((chapterNo, index) => (
+              <div
+                key={chapterNo}
+                style={{ position: 'absolute', top: (range.start + index) * ROW_HEIGHT, left: 0, right: 0 }}
+              >
+                {renderRow(chapterNo)}
+              </div>
+            ))}
+          </div>
+        ) : (
+          rows.map((chapterNo) => <div key={chapterNo}>{renderRow(chapterNo)}</div>)
+        )}
       </div>
     </aside>
   )

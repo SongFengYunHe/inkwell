@@ -69,16 +69,6 @@ import { app, dialog, ipcMain, session, shell, type WebContents } from 'electron
 import { exportChapterTask } from '../bridge/task-slip'
 import { getDatabasePath } from '../db/client'
 import * as repo from '../db/repositories'
-import { importVelaDatabase } from '../import/vela'
-import {
-  analyzeImport,
-  cancelSession,
-  commitSession,
-  getSession,
-  revalidateSession,
-  updateImportItem,
-  updateImportItems
-} from '../import/session'
 import { getLatestReview, listCharacters, removeCharacter, saveCharacter, saveReview } from '../db/memory-repo'
 import { applyThemePack, buildThemePack } from '../pack/theme-pack'
 /* M10：质量闭环 */
@@ -91,7 +81,6 @@ import { auditBook, estimateBookAudit } from '../engine/audit-book'
 import { fixChapter } from '../engine/fix'
 import { getTruthFiles } from '../engine/truth'
 import { rebuildMemory } from '../engine/pipeline'
-import { exportProject } from '../export'
 import { buildChapterContext } from '../llm/context'
 import {
   abortPipeline,
@@ -154,6 +143,16 @@ const activePipelineIds = new Set<string>()
 /** M8：整本审计任务（可中止），key 为 taskId */
 const activeAuditTasks = new Map<string, AbortController>()
 
+/**
+ * M12-B：导入解析器 / 导出引擎只在「首次真正使用时」动态 import。
+ * 它们只在用户点「导入 / 导出」时才会被加载，冷启动主进程不再 require 整条解析链路。
+ */
+let importSessionModule: Promise<typeof import('../import/session')> | null = null
+function loadImportSession(): Promise<typeof import('../import/session')> {
+  importSessionModule ??= import('../import/session')
+  return importSessionModule
+}
+
 /** 长任务的失败信息统一格式化 */
 function jobErrorMessage(error: unknown, aborted: boolean): string {
   if (aborted) return '已停止'
@@ -196,6 +195,7 @@ export function registerIpcHandlers(): void {
       ]
     })
     if (picked.canceled || picked.filePaths.length === 0) return null
+    const { importVelaDatabase } = await import('../import/vela')
     return importVelaDatabase(picked.filePaths[0])
   })
 
@@ -253,6 +253,7 @@ export function registerIpcHandlers(): void {
   /* ------------------------------- M4 导出 ------------------------------- */
   ipcMain.handle(IpcChannel.exportProject, async (_event, raw: unknown) => {
     const input = exportSchema.parse(raw)
+    const { exportProject } = await import('../export')
     return exportProject(input, join(app.getPath('documents'), 'Inkwell 导出'))
   })
 
@@ -622,27 +623,34 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.importAnalyze, async (event, raw: unknown) => {
     const input = importAnalyzeSchema.parse(raw)
     const sender = event.sender
+    const { analyzeImport } = await loadImportSession()
     return analyzeImport(input, {
       onProgress: (progress) =>
         emit<ImportEvent>(sender, IpcChannel.importEvent, { type: 'progress', progress })
     })
   })
-  ipcMain.handle(IpcChannel.importSession, (_event, id: unknown) =>
-    getSession(importSessionSchema.shape.id.parse(id))
-  )
-  ipcMain.handle(IpcChannel.importUpdateItem, (_event, raw: unknown) =>
-    updateImportItem(importUpdateItemSchema.parse(raw))
-  )
-  ipcMain.handle(IpcChannel.importUpdateItems, (_event, raw: unknown) =>
-    updateImportItems(importUpdateItemsSchema.parse(raw))
-  )
-  ipcMain.handle(IpcChannel.importValidate, (_event, raw: unknown) =>
-    revalidateSession(importValidateSchema.parse(raw))
-  )
-  ipcMain.handle(IpcChannel.importCommit, (_event, id: unknown) =>
-    commitSession(importCommitSchema.shape.sessionId.parse(id))
-  )
-  ipcMain.handle(IpcChannel.importCancel, (_event, id: unknown) => {
+  ipcMain.handle(IpcChannel.importSession, async (_event, id: unknown) => {
+    const { getSession } = await loadImportSession()
+    return getSession(importSessionSchema.shape.id.parse(id))
+  })
+  ipcMain.handle(IpcChannel.importUpdateItem, async (_event, raw: unknown) => {
+    const { updateImportItem } = await loadImportSession()
+    return updateImportItem(importUpdateItemSchema.parse(raw))
+  })
+  ipcMain.handle(IpcChannel.importUpdateItems, async (_event, raw: unknown) => {
+    const { updateImportItems } = await loadImportSession()
+    return updateImportItems(importUpdateItemsSchema.parse(raw))
+  })
+  ipcMain.handle(IpcChannel.importValidate, async (_event, raw: unknown) => {
+    const { revalidateSession } = await loadImportSession()
+    return revalidateSession(importValidateSchema.parse(raw))
+  })
+  ipcMain.handle(IpcChannel.importCommit, async (_event, id: unknown) => {
+    const { commitSession } = await loadImportSession()
+    return commitSession(importCommitSchema.shape.sessionId.parse(id))
+  })
+  ipcMain.handle(IpcChannel.importCancel, async (_event, id: unknown) => {
+    const { cancelSession } = await loadImportSession()
     cancelSession(importCommitSchema.shape.sessionId.parse(id))
   })
 
