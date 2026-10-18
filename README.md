@@ -128,7 +128,7 @@
 - **题材包**：设置页「题材包」可把「题材模板 + 提示词覆写 + 校验必填字段」导出成一个 `.json` 分享给别人；导入后题材进入「新建项目」下拉，提示词覆写直接生效，未知模板 key 会跳过而不是整体失败
 - **更新通道与签名**：`release` 工作流在推 `v*` tag 时构建并发布到 GitHub Releases（含 `latest.yml`，即自动更新的源）；`publish` 显式指向 `SongFengYunHe/inkwell`。**当前安装包未做代码签名**，首次运行会有 SmartScreen 提示——需要签名时在 CI 注入 `CSC_LINK` / `CSC_KEY_PASSWORD` 即可，详见下方「发布与自动更新」
 
-> 说明：安装后目录约 336MB，其中 Electron 44 运行时（exe + 共享库 + 语言包）约占 320MB，属框架基线；应用自身的代码与依赖只占约 10MB。降体积的长远路径是迁移 Tauri —— M14 已实测并给出结论：「解包 ≤ 320MB」在当前 Electron 架构下不可达，迁移收益主要在体积、代价是重写双端与外设层，**暂不迁移**（依据见计划书 §9.3 与下方 M14）。
+> 说明：安装后目录约 336MB，其中 Electron 44 运行时（exe + 共享库 + 语言包）约占 320MB，属框架基线；应用自身的代码与依赖只占约 10MB。降体积的长远路径是迁移 Tauri —— M14 已实测并给出结论：「解包 ≤ 320MB」在当前 Electron 架构下不可达，迁移收益主要在体积、代价是重写双端与外设层，**暂不迁移**（依据见 `docs/第五阶段计划书.md` §4 与下方 M14 / M15）。
 
 **M12 · 性能与稳定性 —— 已完成**
 
@@ -159,6 +159,14 @@
 - **自检新增 `smoke:m14`**：schema 未回退（v11）、两条热点查询的查询计划断言、维护动作可安全调用、跨章一致性正 / 负例
 - **Tauri 结论**：实测解包约 335MB，其中约 99% 是 Electron 运行时（exe + 共享库 + 语言包），应用自身代码与依赖仅约 10MB —— 迁移 Tauri 的收益主要是体积，代价是重写双端与外设层，**暂不迁移**
 - M14 不新增数据库迁移（保持 `schema_version = 11`）
+
+**M15 · 体积与分发路径评估 —— 计划书已出（未开始执行）**
+
+- **实测结论**：安装包 90.4MB / 解包 334.8MB 中，**Electron 运行时占 320.2MB（95.6%）**，应用自身（代码+依赖）仅 14.6MB；单个 `Inkwell.exe` 就占 234.6MB（Chromium + Node + 应用合成后的 PE，官方无精简版）——**只要还用 Electron，这个基线就动不了**
+- **方案 A（留在 Electron 做安全压缩）**：`compression: maximum` + 依赖白名单瘦身（MCP stdio 路径的传递依赖）等，现实上限约 **安装包 75~82MB / 解包 300MB**，属于低成本确定性收益
+- **方案 B（迁移 Tauri v2）**：唯一能带来质变的路径，预计 **安装包 8~15MB**；代价是重写 16,449 行主进程与 **119 个 IPC 契约**，且有 3 项硬成本——Drizzle/SQL 层（可用 `drizzle-orm/sqlite-proxy` 保住 schema 与迁移）、MCP stdio Server（Node SDK → Rust `rmcp`）、PDF 导出（`printToPDF` 无对等能力）；另有**换更新通道**（`latest.yml` → `latest.json`），老用户无法自动升级
+- **当前判定**：先做 **V1 安全压缩**；Tauri 只立项一个 **spike 取证**（不承诺迁移），由实测数据决定是否进入正式迁移
+- 完整评估、能力映射、里程碑与风险见 `docs/第五阶段计划书.md`
 
 ## 技术栈
 
@@ -297,8 +305,8 @@ npx electron . --smoke-m8
 打一个 `v*` tag 即触发 [release.yml](.github/workflows/release.yml)：在干净 runner 上构建 NSIS 安装包并连同 `latest.yml` 发布到 GitHub Releases——这正是应用内自动更新的源（设置页「关于」→「检查更新」）。CI 同时会把本次安装包作为 artifact 挂到 Run 上（`inkwell-installer`，保留 30 天），本地打包受限时可以直接下载。
 
 ```powershell
-git tag -a v1.0.0 -m "Inkwell v1.0.0"
-git push origin v1.0.0        # 触发构建 + 发布 release
+git tag -a v1.0.1 -m "Inkwell v1.0.1"
+git push origin v1.0.1        # 触发构建 + 发布 release
 ```
 
 | 项 | 说明 |
@@ -309,7 +317,7 @@ git push origin v1.0.0        # 触发构建 + 发布 release
 | 回滚 | Release 可手动删除并回退 `latest.yml`；升级前应用会自动备份书库（含非空库的 pre-migrate 快照） |
 | 发布形态 | `publish.releaseType: release`：tag 推上去即**直接发布正式版**（不带这个配置 electron-builder 会建 Draft，而 electron-updater 只读已发布的 `latest.yml`，Draft 会导致「检查更新」永远说已是最新） |
 
-> 已发布：**v1.0.0**（[Releases](https://github.com/SongFengYunHe/inkwell/releases/tag/v1.0.0)，含 `Inkwell-1.0.0-x64-setup.exe` 与 `latest.yml`）。
+> 已发布：**v1.0.1**（[Releases](https://github.com/SongFengYunHe/inkwell/releases/tag/v1.0.1)，含 `Inkwell-1.0.1-x64-setup.exe` 与 `latest.yml`）。上一版 **v1.0.0**（[Releases](https://github.com/SongFengYunHe/inkwell/releases/tag/v1.0.0)）。
 
 ```powershell
 npm run clean:release   # 单独清空 release/
@@ -321,7 +329,7 @@ $env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'
 $env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'
 ```
 
-> `release/` 属于构建产物，不入库；安装包约 90MB。
+> `release/` 属于构建产物，不入库；安装包 **90.4MB**（1.0.1 实测，门禁 ≤120MB）。体积构成与「能不能更小」的完整评估见 `docs/第五阶段计划书.md`。
 
 ### 升级安装：覆盖安装不会丢数据
 
