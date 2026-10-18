@@ -4,23 +4,10 @@ import { closeDatabase, getDatabasePath, initDatabase, isDatabaseOpen } from './
 import { markStaleRunsInterrupted } from './db/pipeline-repo'
 import { registerIpcHandlers } from './ipc'
 import { setSecretCrypto } from './security/secrets'
-import { runSmoke } from './smoke'
-import { runSmokeLlm } from './smoke-llm'
-import { runSmokeMcp } from './smoke-mcp'
-import { runSmokeM3 } from './smoke-m3'
-import { runSmokeM4 } from './smoke-m4'
-import { runSmokeM5 } from './smoke-m5'
-import { runSmokeM6 } from './smoke-m6'
-import { runSmokeM7 } from './smoke-m7'
-import { runSmokeM8 } from './smoke-m8'
-import { runSmokeM9 } from './smoke-m9'
-import { runSmokeM10 } from './smoke-m10'
-import { runSmokeM11 } from './smoke-m11'
 import { bootstrapLibraries } from './library/registry'
 import { initIndexQueue } from './search/index-queue'
 import { autoBackupEnabled, createBackup } from './db/backup'
 import { cleanupExpiredTrash } from './db/trash'
-import { pruneImportSessions } from './import/session'
 import { gracefulShutdown, isQuitting, registerInterval } from './lifecycle'
 import { initAutoUpdate } from './update'
 
@@ -36,6 +23,7 @@ const isM8SmokeRun = process.argv.includes('--smoke-m8')
 const isM9SmokeRun = process.argv.includes('--smoke-m9')
 const isM10SmokeRun = process.argv.includes('--smoke-m10')
 const isM11SmokeRun = process.argv.includes('--smoke-m11')
+const isM12SmokeRun = process.argv.includes('--smoke-m12')
 
 const isAnySmokeRun =
   isSmokeRun ||
@@ -49,7 +37,8 @@ const isAnySmokeRun =
   isM8SmokeRun ||
   isM9SmokeRun ||
   isM10SmokeRun ||
-  isM11SmokeRun
+  isM11SmokeRun ||
+  isM12SmokeRun
 
 // 冒烟自检使用独立目录，且不做书库引导（沿用固定库路径）
 if (isAnySmokeRun) {
@@ -93,7 +82,8 @@ function createWindow(): void {
 /** 启动后的后台维护：自动备份轮转 + 回收站到期清理 */
 function scheduleMaintenance(): void {
   // 回收站到期清理 + 导入暂存清理：启动后 20s 跑一次，之后每天一次
-  setTimeout(() => {
+  // M12-B：导入解析器改为首次使用时动态 import，启动路径不再把它拉进主 bundle
+  setTimeout(async () => {
     if (isQuitting()) return
     try {
       const removed = cleanupExpiredTrash()
@@ -104,6 +94,7 @@ function scheduleMaintenance(): void {
     // R5：导入暂存此前只在「导入动作」里清理，长期不用导入的用户会一直留着旧会话
     try {
       if (isDatabaseOpen()) {
+        const { pruneImportSessions } = await import('./import/session')
         const pruned = pruneImportSessions()
         if (pruned > 0) console.log(`[inkwell] pruned ${pruned} expired import session(s)`)
       }
@@ -132,7 +123,7 @@ function scheduleMaintenance(): void {
   }, 60_000).unref?.()
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // 注入系统级密钥加密（MCP 独立进程不注入，降级为明文标注）
   setSecretCrypto(safeStorage)
 
@@ -141,18 +132,20 @@ app.whenReady().then(() => {
     initDatabase(dbFile)
     console.log(`[inkwell] database ready: ${dbFile}`)
 
-    if (isSmokeRun) return runSmoke()
-    if (isLlmSmokeRun) return void runSmokeLlm()
-    if (isMcpSmokeRun) return void runSmokeMcp()
-    if (isM3SmokeRun) return void runSmokeM3()
-    if (isM4SmokeRun) return void runSmokeM4()
-    if (isM5SmokeRun) return void runSmokeM5()
-    if (isM6SmokeRun) return void runSmokeM6()
-    if (isM7SmokeRun) return void runSmokeM7()
-    if (isM8SmokeRun) return void runSmokeM8()
-    if (isM9SmokeRun) return void runSmokeM9()
-    if (isM10SmokeRun) return void runSmokeM10()
-    if (isM11SmokeRun) return void runSmokeM11()
+    // M12-B：各套自检按需动态 import，避免把 smoke 及其依赖（导出/导入等）打进启动 bundle
+    if (isSmokeRun) return (await import('./smoke')).runSmoke()
+    if (isLlmSmokeRun) return void (await import('./smoke-llm')).runSmokeLlm()
+    if (isMcpSmokeRun) return void (await import('./smoke-mcp')).runSmokeMcp()
+    if (isM3SmokeRun) return void (await import('./smoke-m3')).runSmokeM3()
+    if (isM4SmokeRun) return void (await import('./smoke-m4')).runSmokeM4()
+    if (isM5SmokeRun) return void (await import('./smoke-m5')).runSmokeM5()
+    if (isM6SmokeRun) return void (await import('./smoke-m6')).runSmokeM6()
+    if (isM7SmokeRun) return void (await import('./smoke-m7')).runSmokeM7()
+    if (isM8SmokeRun) return void (await import('./smoke-m8')).runSmokeM8()
+    if (isM9SmokeRun) return void (await import('./smoke-m9')).runSmokeM9()
+    if (isM10SmokeRun) return void (await import('./smoke-m10')).runSmokeM10()
+    if (isM11SmokeRun) return void (await import('./smoke-m11')).runSmokeM11()
+    if (isM12SmokeRun) return void (await import('./smoke-m12')).runSmokeM12()
     return
   }
 
