@@ -294,3 +294,15 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/*
+ * M14-A 动效预算（应用内）：专注 / 沉浸写作时由 App 在 <html> 上挂 .motion-lite，
+ * 与系统偏好「减少动态效果」效果一致——长会话下少做合成动画，降低无谓渲染开销。
+ */
+.motion-lite *,
+.motion-lite *::before,
+.motion-lite *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}

@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { BrowserWindow, app, safeStorage, shell } from 'electron'
-import { closeDatabase, getDatabasePath, initDatabase, isDatabaseOpen } from './db/client'
+import { checkpointWal, closeDatabase, getDatabasePath, initDatabase, isDatabaseOpen, optimizeDatabase } from './db/client'
 import { markStaleRunsInterrupted } from './db/pipeline-repo'
 import { registerIpcHandlers } from './ipc'
 import { setSecretCrypto } from './security/secrets'
@@ -25,6 +25,7 @@ const isM10SmokeRun = process.argv.includes('--smoke-m10')
 const isM11SmokeRun = process.argv.includes('--smoke-m11')
 const isM12SmokeRun = process.argv.includes('--smoke-m12')
 const isM13SmokeRun = process.argv.includes('--smoke-m13')
+const isM14SmokeRun = process.argv.includes('--smoke-m14')
 
 const isAnySmokeRun =
   isSmokeRun ||
@@ -40,7 +41,8 @@ const isAnySmokeRun =
   isM10SmokeRun ||
   isM11SmokeRun ||
   isM12SmokeRun ||
-  isM13SmokeRun
+  isM13SmokeRun ||
+  isM14SmokeRun
 
 // 冒烟自检使用独立目录，且不做书库引导（沿用固定库路径）
 if (isAnySmokeRun) {
@@ -114,6 +116,18 @@ function scheduleMaintenance(): void {
     }
   }, 6 * 60 * 60 * 1000)
 
+  // M14-C：每 2 小时合并 WAL 并让 SQLite 按需重统计，
+  // 避免长时间会话下 -wal 无限增长、查询计划脱离真实数据分布。
+  registerInterval(() => {
+    if (isQuitting() || !isDatabaseOpen()) return
+    try {
+      checkpointWal()
+      optimizeDatabase()
+    } catch (error) {
+      console.error('[inkwell] wal checkpoint / optimize failed:', error)
+    }
+  }, 2 * 60 * 60 * 1000)
+
   // 启动后 60s 做首次自动备份
   setTimeout(() => {
     if (isQuitting() || !autoBackupEnabled()) return
@@ -149,6 +163,7 @@ app.whenReady().then(async () => {
     if (isM11SmokeRun) return void (await import('./smoke-m11')).runSmokeM11()
     if (isM12SmokeRun) return void (await import('./smoke-m12')).runSmokeM12()
     if (isM13SmokeRun) return void (await import('./smoke-m13')).runSmokeM13()
+    if (isM14SmokeRun) return void (await import('./smoke-m14')).runSmokeM14()
     return
   }
 

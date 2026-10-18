@@ -131,6 +131,47 @@ export function estimateBookAudit(projectId: number): BookAuditEstimate {
   return { chapters: units.length, promptTokens, estTotalTokens: totalTokens }
 }
 
+/**
+ * M14-D：跨章一致性（人物连续性）。
+ *
+ * 逐章审计只能看到「本章」，看不出「某个角色在整本书里从头到尾都没露面」这类
+ * 跨章缺陷。这里在全书审计时补一条：细纲里声明的角色若在**所有**章节正文中
+ * 都未出现，则该角色被视为悬空，在其首次被声明的章节上记一条 warn。
+ *
+ * 纯确定性、零成本；每个角色只判一次（在最先声明它的章节上给出）。
+ */
+function crossChapterChecks(units: AuditChapterUnit[]): Map<number, AuditCheck[]> {
+  const allContent = units.map((unit) => unit.content).join('\n')
+  const declared = new Set<string>()
+  const map = new Map<number, AuditCheck[]>()
+
+  for (const unit of units) {
+    const dangling: string[] = []
+    for (const name of unit.brief?.characters ?? []) {
+      if (!name || declared.has(name)) continue
+      declared.add(name)
+      if (!allContent.includes(name)) dangling.push(name)
+    }
+    if (dangling.length > 0) {
+      map.set(unit.chapterNo, [
+        {
+          dimension: '跨章一致性·角色',
+          passed: false,
+          severity: 'warn',
+          detail: `细纲声明的角色在全书正文中从未出现：${dangling.join('、')}`
+        }
+      ])
+    }
+  }
+  return map
+}
+
+/** 把跨章一致性检查并入某章报告（同样尊重 audit_config 的维度开关） */
+function withCrossChecks(report: AuditReport, cross: AuditCheck[]): AuditReport {
+  if (cross.length === 0) return report
+  return { ...report, checks: filterDisabledChecks([...report.checks, ...cross], getAuditConfig()) }
+}
+
 /** 用确定性检查拼一个 AuditReport（与 auditChapter 的输出形态一致，同样读 audit_config） */
 function reportFromChecks(projectId: number, chapterNo: number, checks: AuditCheck[]): AuditReport {
   const config = getAuditConfig()
@@ -259,6 +300,8 @@ export async function resumeAuditBook(input: {
 
   const results: BookAuditChapterResult[] = []
   const dimensionMap = new Map<string, BookAuditDimensionStat>()
+  // M14-D：跨章一致性（人物连续性）——需要全书视角，故在循环外先算好
+  const crossChecks = crossChapterChecks(units)
   let cursor = run.cursor
 
   try {
@@ -280,20 +323,23 @@ export async function resumeAuditBook(input: {
       let report: AuditReport | null = index < run.cursor ? stored : null
 
       if (!report) {
+        const cross = crossChecks.get(unit.chapterNo) ?? []
         report = useModel
-          ? await auditChapter({
-              project,
-              brief: unit.brief,
-              content: unit.content,
-              previousContent: unit.previousContent,
-              useModel: true,
-              signal: input.signal
-            })
-          : reportFromChecks(
-              input.projectId,
-              unit.chapterNo,
-              deterministicAudit(project, unit.brief, unit.content, unit.previousContent)
+          ? withCrossChecks(
+              await auditChapter({
+                project,
+                brief: unit.brief,
+                content: unit.content,
+                previousContent: unit.previousContent,
+                useModel: true,
+                signal: input.signal
+              }),
+              cross
             )
+          : reportFromChecks(input.projectId, unit.chapterNo, [
+              ...deterministicAudit(project, unit.brief, unit.content, unit.previousContent),
+              ...cross
+            ])
 
         // 断点复跑依赖 review 表；仅在尚无报告时落库，避免覆盖模型审计报告
         if (!stored) saveReview(input.projectId, unit.chapterNo, unit.draftId, report)

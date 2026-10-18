@@ -128,7 +128,7 @@
 - **题材包**：设置页「题材包」可把「题材模板 + 提示词覆写 + 校验必填字段」导出成一个 `.json` 分享给别人；导入后题材进入「新建项目」下拉，提示词覆写直接生效，未知模板 key 会跳过而不是整体失败
 - **更新通道与签名**：`release` 工作流在推 `v*` tag 时构建并发布到 GitHub Releases（含 `latest.yml`，即自动更新的源）；`publish` 显式指向 `SongFengYunHe/inkwell`。**当前安装包未做代码签名**，首次运行会有 SmartScreen 提示——需要签名时在 CI 注入 `CSC_LINK` / `CSC_KEY_PASSWORD` 即可，详见下方「发布与自动更新」
 
-> 说明：安装后目录约 336MB，其中 Electron 44 运行时（exe + 共享库 + 语言包）约占 320MB，属框架基线；应用自身的代码与依赖只占约 10MB。长期降体积的路径是迁移 Tauri（见计划书 §9.3）。
+> 说明：安装后目录约 336MB，其中 Electron 44 运行时（exe + 共享库 + 语言包）约占 320MB，属框架基线；应用自身的代码与依赖只占约 10MB。降体积的长远路径是迁移 Tauri —— M14 已实测并给出结论：「解包 ≤ 320MB」在当前 Electron 架构下不可达，迁移收益主要在体积、代价是重写双端与外设层，**暂不迁移**（依据见计划书 §9.3 与下方 M14）。
 
 **M12 · 性能与稳定性 —— 已完成**
 
@@ -148,6 +148,17 @@
 - **工具栏习惯排序 + pin**：右键工具栏按钮即可固定到最前
 - **快捷键规范与速查**：`Ctrl+*` 全局、`Ctrl+Shift+*` 面板 / 布局、`Alt+*` 局部、`Esc` 关闭、`?` 唤起速查浮层
 - **自检新增 `smoke:m13`**：`ui_pref` 往返 / upsert / 删除 / 重置，以及 zod 入参校验
+
+**M14 · 多层次优化 —— 已完成**
+
+- **渲染与内存**：抽出通用固定行高虚拟滚动 hook（[virtual.ts](file:///e:/project_novelwriter/src/renderer/src/virtual.ts)），章节导航改为复用同一实现 —— 长列表只渲染可视窗口，不再一次性铺满 DOM；Zustand 全部改为按字段 selector 订阅（改哪块只重渲哪块）；专注模式下自动降级动效（`motion-lite`，与系统「减少动态效果」偏好叠加）
+- **数据与索引**：热点查询（正文列表 / 细纲列表）新增 `EXPLAIN QUERY PLAN` 断言并固化进自检，确认真的走索引而非全表扫描；后台每 2 小时做一次 WAL checkpoint + `PRAGMA optimize`，避免长会话下 `-wal` 膨胀、查询计划脱离真实数据分布
+- **跨章一致性**：全书审计新增「跨章一致性·角色」维度 —— 细纲里声明、但整本书正文从头到尾都没出场的角色会被点名（warn 级）；每个角色只判一次、纯确定性零成本
+- **打包层真实运行探针（补上 CI 最大的盲区）**：CI 此前只 typecheck + 打包 + 量体积，**从不运行打包后的应用** —— 历史上「裁剪 drizzle-orm 方言目录 → `sql/sql.js` 找不到 `pg-core/columns/enum.js` → 启动即崩」正是这类抓不到的回归。新增 `npm run verify:pack`：先断言 asar 白名单（含上述易被误删的依赖）与原生模块确实解包到 `app.asar.unpacked`，再把 `win-unpacked` 复制到 `%TEMP%` **真的跑起来**（`--smoke` 跑两遍验跨进程持久化、`--smoke-m14` 验迁移 + drizzle 查询 + 审计），CI `size-watchdog` 已接入
+- **统一自检入口**：`npm run smoke:all` 一条命令构建一次、串行跑完 15 套自检（此前靠人工 `foreach`，漏跑很常见）
+- **自检新增 `smoke:m14`**：schema 未回退（v11）、两条热点查询的查询计划断言、维护动作可安全调用、跨章一致性正 / 负例
+- **Tauri 结论**：实测解包约 335MB，其中约 99% 是 Electron 运行时（exe + 共享库 + 语言包），应用自身代码与依赖仅约 10MB —— 迁移 Tauri 的收益主要是体积，代价是重写双端与外设层，**暂不迁移**
+- M14 不新增数据库迁移（保持 `schema_version = 11`）
 
 ## 技术栈
 
@@ -181,8 +192,11 @@ npm run smoke:m10    # 构建并跑一次 M10 自检（审计配置 / 文风打�
 npm run smoke:m11    # 构建并跑一次 M11 自检（PDF 导出真实性 / 卷名生效 / 题材包往返与非法包拒绝）
 npm run smoke:m12    # 构建并跑一次 M12 自检（冷启动 / 打开 100 章项目 / 连写 10 章回书架 三条 RSS 断言）
 npm run smoke:m13    # 构建并跑一次 M13 自检（ui_pref 往返 / upsert / 删除 / 重置 与 zod 入参校验）
+npm run smoke:m14    # 构建并跑一次 M14 自检（schema 未回退 / 热点查询查询计划 / WAL+optimize / 跨章一致性正负例）
+npm run smoke:all    # 构建一次 → 串行跑完全部 15 套自检（推荐，避免漏跑）
 npm run clean:release # 清空唯一打包目录 release/（被占用时明确指出是哪个文件，且不删除任何东西）
 npm run dist:win     # 打包 Windows 安装包到 release/（NSIS）
+npm run verify:pack  # 打包层真实运行探针：asar 白名单 + 原生模块解包 + 真的把打包版跑起来（CI 已接入）
 ```
 
 > **国内网络**：若 `npm install` 后 Electron 二进制下载失败，先设置镜像再重试：
@@ -275,6 +289,8 @@ npx electron . --smoke-m8
 
 > **不要就地运行 `release/win-unpacked/Inkwell.exe`**：Windows 上被占用的文件会让下次打包在删除旧目录时 EBUSY，electron-builder 会把 `win-unpacked` 掏空并留下 300MB+ 的 `win-unpacked.tmp`（历史上真实发生过两次）。要跑解包版自检，请先把整个 `win-unpacked` 复制到 `%TEMP%` 再运行。
 > `clean:release` 采用「先原子改名、再删除」：目录被占用时它会在**不删任何文件**的前提下失败，并列出是哪个文件被占用。
+
+> **打包层探针（M14）**：`npm run verify:pack` 会在打包之后检查 asar 内的运行时白名单（含最容易被「瘦身」误删的 `drizzle-orm/pg-core/columns/enum.js`）、原生模块是否真的解包到 `app.asar.unpacked`，并把 `win-unpacked` 复制到 `%TEMP%` 真的跑起来（`--smoke` ×2 + `--smoke-m14`）。CI 的 `size-watchdog` 已接入这一步 —— 只 typecheck + 量体积抓不到「应用启动即崩」这类打包层回归。
 
 ### 发布与自动更新
 

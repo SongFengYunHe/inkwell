@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useMemo, type CSSProperties } from 'react'
 import { useAppStore } from '../stores/appStore'
+import { useVirtualList } from '../virtual'
 import { cn, IconButton } from './ui'
 
 type ChapterStatus = 'none' | 'briefed' | 'written'
@@ -43,10 +44,6 @@ export default function ChapterNav({
   const currentChapterNo = useAppStore((s) => s.currentChapterNo)
   const setCurrentChapter = useAppStore((s) => s.setCurrentChapter)
 
-  const [scrollTop, setScrollTop] = useState(0)
-  const [viewport, setViewport] = useState(0)
-  const scrollRef = useRef<HTMLDivElement | null>(null)
-
   const chapterNos = useMemo(() => {
     const numbers = new Set<number>()
     briefs.forEach((item) => numbers.add(item.chapterNo))
@@ -71,24 +68,14 @@ export default function ChapterNav({
   const titleMap = useMemo(() => new Map(briefs.map((item) => [item.chapterNo, item.title])), [briefs])
 
   const nextChapterNo = chapterNos.length === 0 ? 1 : Math.max(...chapterNos) + 1
-  const virtual = rows.length > VIRTUAL_THRESHOLD
 
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const update = (): void => setViewport(el.clientHeight)
-    update()
-    const observer = new ResizeObserver(update)
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [])
-
-  const range = useMemo(() => {
-    if (!virtual || viewport === 0) return { start: 0, end: rows.length }
-    const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
-    const end = Math.min(rows.length, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN)
-    return { start, end }
-  }, [virtual, viewport, scrollTop, rows.length])
+  // M14-A：复用统一虚拟滚动 hook（原为此处独有实现）
+  const { scrollRef, onScroll, virtual, range, totalHeight } = useVirtualList({
+    count: rows.length,
+    rowHeight: ROW_HEIGHT,
+    overscan: OVERSCAN,
+    threshold: VIRTUAL_THRESHOLD
+  })
 
   const renderRow = useCallback(
     (chapterNo: number) => {
@@ -146,11 +133,11 @@ export default function ChapterNav({
 
       <div
         ref={scrollRef}
-        onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+        onScroll={onScroll}
         className="flex-1 overflow-y-auto px-2 py-2"
       >
         {virtual ? (
-          <div style={{ height: rows.length * ROW_HEIGHT, position: 'relative' }}>
+          <div style={{ height: totalHeight, position: 'relative' }}>
             {rows.slice(range.start, range.end).map((chapterNo, index) => (
               <div
                 key={chapterNo}

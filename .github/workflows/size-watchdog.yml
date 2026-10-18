@@ -92,6 +92,11 @@ jobs:
           if ($releaseMB -gt $releaseLimitMB) { Write-Error "release/ 总体积超标：${releaseMB}MB > ${releaseLimitMB}MB"; $failed = $true }
           if ($failed) { exit 1 }
 
+      # M14-D：把打包后的应用**真的跑起来**（asar 白名单 + 原生模块解包 + 跨进程持久化 + m14 自检）。
+      # 历史上的打包层回归（裁剪 drizzle 方言目录致启动即崩）只有这一步能抓到。
+      - name: Verify packaged app actually runs
+        run: npm run verify:pack
+
       # 把这次的产物挂到 Run 上：本地 release/ 被占用清理不掉时，用户仍能从 CI 下载到最新安装包
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4

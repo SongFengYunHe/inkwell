@@ -22,6 +22,7 @@ export default function App() {
   const clearNotice = useAppStore((s) => s.clearNotice)
   const theme = useAppStore((s) => s.theme)
   const toggleTheme = useAppStore((s) => s.toggleTheme)
+  const focusMode = useAppStore((s) => s.focusMode)
   const setView = useAppStore((s) => s.setView)
   const loadProjects = useAppStore((s) => s.loadProjects)
   const loadBootstrap = useAppStore((s) => s.loadBootstrap)
@@ -53,6 +54,11 @@ export default function App() {
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
   }, [theme])
+
+  // M14-A 动效预算：专注模式下降级动画（系统级 prefers-reduced-motion 已在 global.css 兜底）
+  useEffect(() => {
+    document.documentElement.classList.toggle('motion-lite', focusMode)
+  }, [focusMode])
 
   // 订阅主进程的流式生成事件（StrictMode 下会订阅-退订-再订阅，无副作用）
   useEffect(() => {

@@ -101,6 +101,25 @@ export function closeDatabase(): void {
   databasePath = ''
 }
 
+/**
+ * M14-C：WAL checkpoint。
+ * 长时间运行的会话里 -wal 会持续增长；定期（维护任务）checkpoint 把它合并回主库，
+ * 避免退出时才一次性 TRUNCATE 造成长时间卡顿。DELETE 模式下是空操作。
+ */
+export function checkpointWal(mode: 'PASSIVE' | 'FULL' | 'TRUNCATE' = 'TRUNCATE'): void {
+  if (!sqlite || journalMode !== 'WAL') return
+  sqlite.pragma(`wal_checkpoint(${mode})`)
+}
+
+/**
+ * M14-C：`PRAGMA optimize`——让 SQLite 在需要时才重新统计/清理，
+ * 保持查询计划贴近真实数据分布（比无条件 ANALYZE 便宜得多）。
+ */
+export function optimizeDatabase(): void {
+  if (!sqlite) return
+  sqlite.pragma('optimize')
+}
+
 /** 备份文件时间戳：YYYYMMDD-HHMMSS */
 function backupStamp(now = Date.now()): string {
   const d = new Date(now)
