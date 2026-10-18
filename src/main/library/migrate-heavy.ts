@@ -102,11 +102,13 @@ export function runHeavyMigration(ctx: HeavyMigrationContext): void {
     src.close()
   }
 
-  ctx.onProgress?.('copy', '正在复制备份 / 导出 / 封面…', 55)
-  for (const dir of AUX_DIRS) {
-    const from = join(ctx.sourceRoot, dir)
-    if (existsSync(from)) cpSync(from, join(ctx.target, dir), { recursive: true })
-  }
+  // M12-A：按「实际存在的附属目录」逐个上报，避免 55% 一路挂到 75% 才动
+  const auxPresent = AUX_DIRS.filter((dir) => existsSync(join(ctx.sourceRoot, dir)))
+  ctx.onProgress?.('copy', auxPresent.length === 0 ? '没有需要复制的附属目录' : '正在复制备份 / 导出 / 封面…', 55)
+  auxPresent.forEach((dir, index) => {
+    ctx.onProgress?.('copy', `正在复制 ${dir}（${index + 1}/${auxPresent.length}）…`, 55 + Math.round(((index + 1) / auxPresent.length) * 18))
+    cpSync(join(ctx.sourceRoot, dir), join(ctx.target, dir), { recursive: true })
+  })
 
   ctx.onProgress?.('verify', '正在校验迁移结果…', 75)
   const verifyError = verifyMigration(ctx.sourceDb, targetDb, sourceVersion)

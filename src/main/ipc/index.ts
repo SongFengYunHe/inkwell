@@ -538,11 +538,19 @@ export function registerIpcHandlers(): void {
     }
 
     // R1：重活在 utilityProcess 里跑；await 期间主进程仍可处理 IPC（含「取消迁移」）
-    const result = await migrateActiveLibraryTo(input.targetPath, {
-      onProgress: (progress) => emitMigration({ type: 'progress', progress })
-    })
-    emitMigration({ type: 'done', result })
-    return result
+    // M12-A：MigrateOptions.signal 端到端接通——「取消迁移」与「应用退出」都会中止在途迁移
+    const controller = new AbortController()
+    registerAborter(controller)
+    try {
+      const result = await migrateActiveLibraryTo(input.targetPath, {
+        signal: controller.signal,
+        onProgress: (progress) => emitMigration({ type: 'progress', progress })
+      })
+      emitMigration({ type: 'done', result })
+      return result
+    } finally {
+      unregisterAborter(controller)
+    }
   })
   ipcMain.handle(IpcChannel.libraryCancelMigrate, () => cancelActiveMigration())
 
